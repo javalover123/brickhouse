@@ -10,6 +10,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
+import org.apache.hadoop.hive.ql.udf.generic.GenericUDTF;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.StandardStructObjectInspector;
@@ -70,6 +71,26 @@ public class XUnitTest extends TestCase {
 
 	ArrayList<Object> getStructObject(String dim, List<String> attrNames, List<String> attrVals) {
 		return getStructObject(dim, attrNames, attrVals, true);
+	}
+	
+	@Test
+	public void testProcessOneOne() throws UDFArgumentException, HiveException {
+		XUnitExplodeUDTF xploder = new XUnitExplodeUDTF();
+		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
+		xploder.initialize(oiList);
+		
+		List<String> nList = new ArrayList<String>(1);
+		nList.add(0, "alpha");
+		List<String> vList = new ArrayList<String>(1);
+		vList.add(0, "a");
+		
+		Object struct = getStructObject("adim", nList, vList);
+		validateStructObject(struct, "adim", nList, vList);
+		
+		ArrayList<Object> structList = new ArrayList<Object>(1);
+		structList.add(struct);
+		Object[] dims = { structList };
+		//xploder.process(dims);
 	}
 
 	
@@ -214,9 +235,8 @@ public class XUnitTest extends TestCase {
 		xploder.process(getProcessArgs(structs));
 	}
 
-	@Test
+	//@Test
 	public void testProcessFourDim() throws UDFArgumentException, HiveException {
-		LOG.info("fourdim");
 		Object[] structs = {
 			getOrdTwoStruct("1", "2"), 
 			getAlphaThreeStruct("a", "b", "c"), 
@@ -225,5 +245,64 @@ public class XUnitTest extends TestCase {
 		};
 		xploder.process(getProcessArgs(structs, 3, false));
 	}
+
+    @Test
+    public void testEventExplodeXUnit() throws UDFArgumentException, HiveException {
+		Object[] structs = {
+				getEventStruct("meetme"),
+				getSpamStruct("nonspammer-validated"),
+				getAgeStruct("25-34"),
+				getOneAttrStruct("custom", "c1_profile_view__friends", "NA", false),
+				getOneAttrStruct("custom", "c2_profile_view__platform", "Web", false),
+				getOneAttrStruct("custom", "test", "W2", false),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web")
+			};
+		int maxDepth = 3;
+		xploder.process(getProcessArgs(structs, maxDepth, false));
+    }
+
+    //@Test
+    public void xtestEventTaggedExplodeXUnit() throws UDFArgumentException, HiveException {
+		Object[] structs = {
+				getEventStruct("meetme"),
+				getSpamStruct("nonspammer-validated"),
+				getAgeStruct("25-34"),
+				getOneAttrStruct("custom", "c1_profile_view__friends", "NA", false),
+				getOneAttrStruct("custom", "c2_profile_view__platform", "Web", false),
+				getOneAttrStruct("custom", "test", "W2", false),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web")
+			};
+		int maxDepth = 3;
+    	GenericUDTF tXploder = new TaggedXUnitExplodeUDTF();
+		tXploder.process(getProcessArgs(structs, maxDepth, false));
+    }
+
+    @Test
+    public void testDAUExplodeXUnit() throws UDFArgumentException, HiveException {
+		Object[] structs = {
+				getSpamStruct("nonspammer-validated"),
+				getEventStruct("meetme"),
+				getAgeStruct("25-34"),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web")
+			};
+		int maxDepth = 3;
+		xploder.process(getProcessArgs(structs, maxDepth, true));
+    }
 	
+    //@Test
+    public void xtestDAUTaggedExplodeXUnit() throws UDFArgumentException, HiveException {
+		Object[] structs = {
+				getSpamStruct("nonspammer-validated"),
+				getEventStruct("meetme"),
+				getAgeStruct("25-34"),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web")
+			};
+		int maxDepth = 3;
+    	GenericUDTF tXploder = new TaggedXUnitExplodeUDTF();
+    	tXploder.process(getProcessArgs(structs, maxDepth, true));
+    }
 }

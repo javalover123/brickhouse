@@ -2,7 +2,6 @@ package brickhouse.udf.xunit;
 
 import java.util.Arrays;
 
-
 //// XXX Create Class which models the XUnit 
 /// Make them immutable, like strings,
 /// So we can build them up from previous
@@ -27,6 +26,7 @@ public class XUnitDesc implements Comparable<XUnitDesc> {
 	   for(int i=1; i<newYps.length; ++i) {
 		  newYps[i] = _ypaths[i -1];
 	   }
+       Arrays.sort(newYps, new YPathDescComparator());
 	   return new XUnitDesc( newYps);
 	}
 	
@@ -50,5 +50,9 @@ public class XUnitDesc implements Comparable<XUnitDesc> {
 		}
 		return sb.toString();
 	}
+
+    public YPathDesc[] getYPathDesc() {
+        return this._ypaths;
+    }
 	
 }

@@ -48,5 +48,16 @@ public class YPathDesc implements Comparable<YPathDesc> {
        }
        return sb.toString();
     }
-    
+
+    public String[] getAttrNames() {
+        return _attrNames;
+    }
+
+    public String[] getAttrValues() {
+        return _attrValues;
+    }
+
+    public String getDimName() {
+        return this._dimName;
+    }
 }
