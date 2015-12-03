@@ -6,19 +6,26 @@ import java.util.List;
 
 import junit.framework.TestCase;
 
+import org.junit.Before;
 import org.junit.Test;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
-import org.apache.hadoop.hive.ql.udf.generic.GenericUDTF;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.StandardStructObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.StructField;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
-
+import org.apache.log4j.Logger;
 
 
 public class XUnitTest extends TestCase {
+	private static final Logger LOG = Logger.getLogger( XUnitTest.class);
+	private XUnitExplodeUDTF xploder = null;
+	private ObjectInspector[] oiList = {
+		ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()),
+		PrimitiveObjectInspectorFactory.javaIntObjectInspector,
+		PrimitiveObjectInspectorFactory.javaBooleanObjectInspector
+	};
 	
 	// The struct defining segmentation dimensions always has three fields.
 	static String[] fieldNames = {"dim", "attr_names", "attr_values"};
@@ -37,17 +44,6 @@ public class XUnitTest extends TestCase {
 	}
 
 	/**
-	 * A convenience method for creating a seg dimension struct object instance.
-	 */
-	ArrayList<Object> getStructObject(String dim, List<String> attrNames, List<String> attrVals) {
-		ArrayList<Object> struct = new ArrayList<Object>(3);
-		struct.add(dim);
-		struct.add(attrNames);
-		struct.add(attrVals);
-		return struct;
-	}
-
-	/**
 	 * A convenience method for validating a seg dimension struct object instance.
 	 */
 	void validateStructObject(Object struct, String dim, List<String> attrNames, List<String> attrVals) {
@@ -58,33 +54,24 @@ public class XUnitTest extends TestCase {
 		assertEquals(attrVals, soi.getStructFieldData(struct, fields.get(2)));
 	}
 	
-	@Test
-	public void testInitialize() throws UDFArgumentException {
-		GenericUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		// check we can initialize using the structOI without throwing an exception
-		xploder.initialize(oiList);
+	/**
+	 * A convenience method for creating a seg dimension struct object instance.
+	 */
+	ArrayList<Object> getStructObject(String dim, List<String> attrNames, List<String> attrVals, boolean validate) {
+		ArrayList<Object> struct = new ArrayList<Object>(3);
+		struct.add(dim);
+		struct.add(attrNames);
+		struct.add(attrVals);
+		if (validate) {
+			validateStructObject(struct, dim, attrNames, attrVals);
+		}
+		return struct;
 	}
 
-	@Test
-	public void testProcessOneOne() throws UDFArgumentException, HiveException {
-		GenericUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		xploder.initialize(oiList);
-		
-		List<String> nList = new ArrayList<String>(1);
-		nList.add(0, "alpha");
-		List<String> vList = new ArrayList<String>(1);
-		vList.add(0, "a");
-		
-		Object struct = getStructObject("adim", nList, vList);
-		validateStructObject(struct, "adim", nList, vList);
-		
-		ArrayList<Object> structList = new ArrayList<Object>(1);
-		structList.add(struct);
-		Object[] dims = { structList };
-		xploder.process(dims);
+	ArrayList<Object> getStructObject(String dim, List<String> attrNames, List<String> attrVals) {
+		return getStructObject(dim, attrNames, attrVals, true);
 	}
+
 	
 	/**
 	 * Generates an instance of a seg dim struct with two attribute levels.
@@ -96,9 +83,7 @@ public class XUnitTest extends TestCase {
 		List<String> attrValueList = new ArrayList<String>(2);
 		attrValueList.add(0, ordVal);
 		attrValueList.add(1, subordVal);
-		Object struct = getStructObject("odim", attrNameList, attrValueList);
-		validateStructObject(struct, "odim", attrNameList, attrValueList);
-		return struct;
+		return getStructObject("odim", attrNameList, attrValueList);
 	}
 	
 	/**
@@ -113,76 +98,132 @@ public class XUnitTest extends TestCase {
 		attrValueList.add(0, alphaVal);
 		attrValueList.add(1, betaVal);
 		attrValueList.add(2, gammaVal);
-		Object struct = getStructObject("adim", attrNameList, attrValueList);
-		validateStructObject(struct, "adim", attrNameList, attrValueList);
-		return struct;
+		return getStructObject("adim", attrNameList, attrValueList);
 	}
 	
-	@Test
-	public void testProcessOrd() throws UDFArgumentException, HiveException {
-		GenericUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		xploder.initialize(oiList);
-
-		ArrayList<Object> structList = new ArrayList<Object>(1);
-		structList.add(getOrdTwoStruct("1", "2"));
-		Object[] dims = { structList };
-		xploder.process(dims);
+	Object getOneAttrStruct(String dimName, String attrName, String attrVal, boolean validate) {
+		List<String> attrNameList = new ArrayList<String>(1);
+		attrNameList.add(0, attrName);
+		List<String> attrValueList = new ArrayList<String>(1);
+		attrValueList.add(0, attrVal);
+		return getStructObject(dimName, attrNameList, attrValueList, validate);
 	}
-
 	
-	@Test
-	public void testProcessOrdAlpha() throws UDFArgumentException, HiveException {
-		GenericUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		xploder.initialize(oiList);
-
-		ArrayList<Object> structList = new ArrayList<Object>(2);
-		structList.add(getOrdTwoStruct("1", "2"));
-		structList.add(getAlphaThreeStruct("a", "b", "c"));
-		Object[] dims = { structList };
-		xploder.process(dims);
-	}
-
-	/**
-	 * Generates an instance of an event seg dim struct
-	 */
 	Object getEventStruct(String eventVal) {
-		List<String> attrNameList = new ArrayList<String>(1);
-		attrNameList.add(0, "e");
-		List<String> attrValueList = new ArrayList<String>(1);
-		attrValueList.add(0, eventVal);
-		Object struct = getStructObject("event", attrNameList, attrValueList);
-		validateStructObject(struct, "event", attrNameList, attrValueList);
-		return struct;
+		return getOneAttrStruct("event", "e", eventVal, false);
 	}
 	
-	/**
-	 * Generates an instance of a spam seg dim struct
-	 */
 	Object getSpamStruct(String spamVal) {
-		List<String> attrNameList = new ArrayList<String>(1);
-		attrNameList.add(0, "is_spam");
-		List<String> attrValueList = new ArrayList<String>(1);
-		attrValueList.add(0, spamVal);
-		Object struct = getStructObject("spam", attrNameList, attrValueList);
-		validateStructObject(struct, "spam", attrNameList, attrValueList);
-		return struct;
+		return getOneAttrStruct("spam", "is_spam", spamVal, false);
+	}
+
+	Object getAgeStruct(String ageVal) {
+		return getOneAttrStruct("age", "bucket", ageVal, false);
 	}
 	
+	Object getCohortStruct(String cohortVal) {
+		return getOneAttrStruct("cohort", "signup", cohortVal, false);
+	}
+
+	Object getEthnicityStruct(String ethnicityVal) {
+		return getOneAttrStruct("ethnicity", "e", ethnicityVal, false);
+	}
+	
+	Object getGenderStruct(String genderVal) {
+		return getOneAttrStruct("gender", "sex", genderVal, false);
+	}
+
+	Object getGeoStruct(String continent, String country, String state) {
+		List<String> attrNameList = new ArrayList<String>(3);
+		attrNameList.add(0, "continent");
+		attrNameList.add(1, "country");
+		attrNameList.add(2, "state");
+		List<String> attrValueList = new ArrayList<String>(3);
+		attrValueList.add(0, continent);
+		attrValueList.add(0, country);
+		attrValueList.add(0, state);
+		return getStructObject("geo", attrNameList, attrValueList, false);
+	}
+	
+	Object getPlatformStruct(String superPlatform, String platform) {
+		List<String> attrNameList = new ArrayList<String>(2);
+		attrNameList.add(0, "p");
+		attrNameList.add(1, "p2");
+		List<String> attrValueList = new ArrayList<String>(2);
+		attrValueList.add(0, superPlatform);
+		attrValueList.add(0, platform);
+		return getStructObject("platform", attrNameList, attrValueList, false);
+	}
+	
+	Object getReligionStruct(String religionVal) {
+		return getOneAttrStruct("religion", "r", religionVal, false);
+	}
+	
+	Object getRetentionStruct(String retentionVal) {
+		return getOneAttrStruct("retention", "r", retentionVal, false);
+	}
+
+	Object getSexPrefStruct(String sexPrefVal) {
+		return getOneAttrStruct("sex_pref", "pref", sexPrefVal, false);
+	}
+
+	Object[] getProcessArgs(Object[] structs, int max, boolean globalFlag) {
+		ArrayList<Object> structList = new ArrayList<Object>();
+		for (Object struct : structs) {
+			structList.add(struct);
+		}		
+		Object[] dims = { structList, new Integer(max), new Boolean(globalFlag) };
+		return dims;
+	}
+	Object[] getProcessArgs(Object[] structs, int max) {
+		return getProcessArgs(structs, max, true);
+	}
+	Object[] getProcessArgs(Object[] structs) {
+		return getProcessArgs(structs, 3, true);
+	}
+	
+	@Before
+	public void setUp() throws UDFArgumentException {
+		this.xploder = new ConstrainedXUnitExplodeUDTF();
+		this.xploder.initialize(this.oiList);
+	}
+	
+	//@Test
+	public void xtestProcessOneOne() throws UDFArgumentException, HiveException {
+		List<String> nList = new ArrayList<String>(1);
+		nList.add(0, "alpha");
+		List<String> vList = new ArrayList<String>(1);
+		vList.add(0, "a");
+		Object[] structs = { getStructObject("adim", nList, vList) };
+		xploder.process(getProcessArgs(structs));
+	}
+	
+	//@Test
+	public void xtestProcessOrd() throws UDFArgumentException, HiveException {
+		Object[] structs = { getOrdTwoStruct("1", "2") };
+		xploder.process(getProcessArgs(structs));
+	}
+
+	
+	//@Test
+	public void xtestProcessOrdAlpha() throws UDFArgumentException, HiveException {
+		Object[] structs = {
+			getOrdTwoStruct("1", "2"), 
+			getAlphaThreeStruct("a", "b", "c") 
+		};
+		xploder.process(getProcessArgs(structs));
+	}
+
 	@Test
 	public void testProcessFourDim() throws UDFArgumentException, HiveException {
-		GenericUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		xploder.initialize(oiList);
-
-		ArrayList<Object> structList = new ArrayList<Object>(4);
-		structList.add(getOrdTwoStruct("1", "2"));
-		structList.add(getAlphaThreeStruct("a", "b", "c"));
-		structList.add(getEventStruct("s_page_view_api"));
-		structList.add(getEventStruct("nonspammer-validated"));
-		Object[] dims = { structList };
-		xploder.process(dims);
+		LOG.info("fourdim");
+		Object[] structs = {
+			getOrdTwoStruct("1", "2"), 
+			getAlphaThreeStruct("a", "b", "c"), 
+			getEventStruct("s_page_view_api"),
+			getSpamStruct("nonspammer-validated")
+		};
+		xploder.process(getProcessArgs(structs, 3, false));
 	}
 	
 }

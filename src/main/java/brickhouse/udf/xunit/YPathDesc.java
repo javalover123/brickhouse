@@ -1,6 +1,6 @@
 package brickhouse.udf.xunit;
 
-public class YPathDesc {
+public class YPathDesc implements Comparable<YPathDesc> {
 	private String _dimName;
     private String[] _attrNames;
     private String[] _attrValues;
@@ -14,6 +14,13 @@ public class YPathDesc {
 	   _dimName = dimName;
        _attrNames = attrNames;
        _attrValues = attrValues;
+	}
+	
+	public int compareTo(YPathDesc other) {
+		// pure alpha sort
+		//return toString().compareTo(other.toString());
+		// sort by dim
+		return _dimName.compareTo(other._dimName);
 	}
 	
 	public int numLevels() { return _attrNames.length; }

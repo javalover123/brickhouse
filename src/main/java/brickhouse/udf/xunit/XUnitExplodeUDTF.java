@@ -56,27 +56,27 @@ import brickhouse.udf.counter.IncrCounterUDF;
 public class XUnitExplodeUDTF extends GenericUDTF {
 	private static final Logger LOG = Logger.getLogger( XUnitExplodeUDTF.class);
 	
-	private static final String GLOBAL_UNIT = "/G";
+	protected static final String GLOBAL_UNIT = "/G";
 
-	private ListObjectInspector listInspector;
-	private StructObjectInspector structInspector;
-	private StructField dimField;
-	private StructField attrNamesField;
-	private StructField attrValuesField;
-	private ListObjectInspector attrNamesInspector;
-	private StringObjectInspector attrNameInspector;
-	private ListObjectInspector attrValuesInspector;
-	private StringObjectInspector attrValueInspector;
-	private String[] xunitFieldArr = new String[1];
+	protected ListObjectInspector listInspector;
+	protected StructObjectInspector structInspector;
+	protected StructField dimField;
+	protected StructField attrNamesField;
+	protected StructField attrValuesField;
+	protected ListObjectInspector attrNamesInspector;
+	protected StringObjectInspector attrNameInspector;
+	protected ListObjectInspector attrValuesInspector;
+	protected StringObjectInspector attrValueInspector;
+	protected String[] xunitFieldArr = new String[1];
 	
-	private IntObjectInspector maxDimInspector = null;
-    private int maxDims = -1;
+	protected IntObjectInspector maxDimInspector = null;
+	protected int maxDims = -1;
     
-    private BooleanObjectInspector globalFlagInspector;
+	protected BooleanObjectInspector globalFlagInspector;
     
-    private Reporter reporter;
+	protected Reporter reporter;
     
-    private Reporter getReporter() throws ClassNotFoundException, NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
+	protected Reporter getReporter() throws ClassNotFoundException, NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, InvocationTargetException {
     	if(reporter == null) {
     		reporter = IncrCounterUDF.GetReporter();
     	}
@@ -84,7 +84,7 @@ public class XUnitExplodeUDTF extends GenericUDTF {
     }
     
     
-    private void incrCounter( String counterName, long counter) {
+    protected void incrCounter( String counterName, long counter) {
        try {
 		 getReporter().incrCounter("XUnitExplode", counterName, counter);
 	   } catch ( Exception exc) {
@@ -159,6 +159,8 @@ public class XUnitExplodeUDTF extends GenericUDTF {
 				|| ((PrimitiveObjectInspector)dimField.getFieldObjectInspector()).getPrimitiveCategory() != PrimitiveCategory.STRING) {
 		    usage("dim field must be a string");
 		}
+
+		@SuppressWarnings("unused")
 		StringObjectInspector dimInspector = (StringObjectInspector) dimField.getFieldObjectInspector();
 
 		attrNamesField = structInspector.getStructFieldRef("attr_names");
@@ -211,6 +213,7 @@ public class XUnitExplodeUDTF extends GenericUDTF {
 	
 	@Override
 	public void process(Object[] args) throws HiveException {
+		@SuppressWarnings("unchecked")
 		List<Object>  dimValuesList = (List<Object>) listInspector.getList(args[0]);
 
 		if( globalFlagInspector != null ) {
@@ -245,7 +248,7 @@ public class XUnitExplodeUDTF extends GenericUDTF {
 
 	}
 	
-	private void forwardXUnit( String xunit) throws HiveException {
+	protected void forwardXUnit( String xunit) throws HiveException {
 		///LOG.info(" Forwarding XUnit " + xunit);
 	    xunitFieldArr[0] = xunit;
 	    forward( xunitFieldArr);
@@ -276,9 +279,11 @@ public class XUnitExplodeUDTF extends GenericUDTF {
 		return noSlash;
 	}
 
-	private List<YPathDesc> generateYPaths( Object structObj) throws IllegalArgumentException {
-		List nameList = (List) structInspector.getStructFieldData(structObj, attrNamesField);
-		List valueList = (List) structInspector.getStructFieldData(structObj, attrValuesField);
+	protected List<YPathDesc> generateYPaths( Object structObj) throws IllegalArgumentException {
+		@SuppressWarnings("unchecked")
+		List<String> nameList = (List<String>) structInspector.getStructFieldData(structObj, attrNamesField);
+		@SuppressWarnings("unchecked")
+		List<String> valueList = (List<String>) structInspector.getStructFieldData(structObj, attrValuesField);
 		
 		List<YPathDesc> retVal = new ArrayList<YPathDesc>();
 		if( nameList == null || valueList == null) {
@@ -330,7 +335,7 @@ public class XUnitExplodeUDTF extends GenericUDTF {
 	    return retVal;
 	}
 	
-	private List<XUnitDesc> combinations( Object structObj,  List<Object>  otherDims) {
+	protected List<XUnitDesc> combinations( Object structObj,  List<Object>  otherDims) {
 	    List<XUnitDesc> allCombos = new ArrayList<XUnitDesc>();
 		List<YPathDesc> thisYPaths = generateYPaths( structObj);
 		if( otherDims.size() == 0 ) {
