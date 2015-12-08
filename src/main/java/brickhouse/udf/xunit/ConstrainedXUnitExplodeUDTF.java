@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -58,9 +59,9 @@ import org.apache.log4j.Logger;
  * The complete set adds nCr for (11,0), (11,5), (11,6), (11,7), (11,8), (11,9),
  * (11,10), and (11,11) (i.e. -- 1, 462, 330, 165, 55, 11, 1) for 1586 total.
  * 
- * The parent class, XUnitExplodeUDTF, relies on a recursive, depth-first
- * traversal of a sorted tree, with the shortest paths emitted by the leaves.
- * That approach eliminates generation of equivalent paths, but requires
+ * This class' parent class, XUnitExplodeUDTF, relies on a recursive, depth-
+ * first traversal of a sorted tree, with the shortest paths emitted by the
+ * leaves. That approach eliminates generation of equivalent paths, but requires
  * complete traversal of the nodes in the tree.  That is, for an 11 dimensional
  * case, we generate all 1586 dimensional combos even though we know we'll toss
  * out 2/3 of them for having more than the maximum number of dimensions.  Scale
@@ -68,9 +69,9 @@ import org.apache.log4j.Logger;
  * effect of ypaths (to handle attributes) into the mix, we're burning a bunch
  * of cycles for no benefit.  And this happens for every event.
  * 
- * This class tries to minimize the number of wasted cycles.  We use an off the
- * shelf library (https://github.com/dpaukov/combinatoricslib) to generate the
- * nCr cases we care about more efficiently.  We also take advantage of some
+ * Unsurprisingly, this class tries to avoid those wasted cycles.We use an off
+ * the shelf library (https://github.com/dpaukov/combinatoricslib) to generate
+ * the nCr cases we care about more efficiently.  We also take advantage of some
  * domain-specific details of our use case, allowing us to tailor the explode
  * around event, spam, and custom segmentation dimensions.
  */
@@ -85,18 +86,28 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 	protected Object eventStruct = null;
 	protected boolean globalFlag = true;
 	
-    // overrides of parent methods
-    @Override
+	////////////////////////////////
+	// overrides of parent methods
+	////////////////////////////////
+
+	@Override
 	public boolean shouldIncludeXUnit(XUnitDesc xunit ) {
-    	//LOG.info("should include: [" + (xunit.numDims() <= maxDims) + "] : " + xunit);
-    	return xunit.numDims() <= maxDims;	
+		if (xunit.toString().contains("/custom/c")) {
+			return xunit.numDims() <= (maxDims + 1);
+		}
+		return xunit.numDims() <= maxDims;
 	}
-    
+	
 	@Override
 	public void process(Object[] args) throws HiveException {
     	Map<String, Object> dimMap = new HashMap<String, Object>();
     	for (Object struct: listInspector.getList(args[0])) {
-    		dimMap.put(structDimName(struct), struct);
+    		String dimName = structDimName(struct);
+    		if (dimName == "custom" && structAttrNames(struct).size() > 0) {
+    			// prevent key collision in the map for custom dims
+    			dimName = dimName + structAttrNames(struct).get(0);
+    		}
+    		dimMap.put(dimName, struct);
     	}
     	
 		if(maxDimInspector != null) {
@@ -111,151 +122,237 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 		}
 		
 		try {
-			for (XUnitDesc xunit : constrainedExplode(dimMap)) {
+			Collection<XUnitDesc> xunits = constrainedExplode(dimMap, false);
+			for (XUnitDesc xunit : xunits) {
 				if(shouldIncludeXUnit(xunit)) {
 					forwardXUnit(xunit.toString());
 				} else {
 					LOG.warn("unexpected filter kick-in for " + xunit.toString());
 				}
 			}
+			incrCounter("NumXUnits", xunits.size());
 		} catch(IllegalArgumentException illArg) {
 			LOG.error("Error generating XUnits", illArg);
 		}
 	}
 
-    @Override
-    protected void incrCounter( String counterName, long counter) {
-    	LOG.info("XUnitExplode counter incremented by " + counter);
-     }
-    
-	@Override
-	protected void forwardXUnit( String xunit) throws HiveException {
-		LOG.info(" Forwarding XUnit " + xunit);
-	}
-	
+	//////////////////////////
 	// class-specific methods
-    
-    protected Collection<XUnitDesc> constrainedExplode(Map<String, Object> dimMap) {
+	//////////////////////////
+    protected Collection<XUnitDesc> constrainedExplode(Map<String, Object> dimMap, boolean sort) {
     	Collection<ICombinatoricsVector<String>> dimCombinations = null;
+    	int minDims = (maxDims <= 2) ? maxDims : 2;
+
+		if (maxDims > minDims) {
+			// for combinations, we work with the map keys only
+	    	HashSet<String> reqDims = new HashSet<String>();
+	    	HashSet<String> optDims = new HashSet<String>(dimMap.keySet());
+
+	    	if (globalFlag) {
+		    	// for DAU (i.e. -- globalFlag==true), all optional & no custom dims
+
+	    		// first grab all the [1,minDims] combos
+				dimCombinations = blindCombos(optDims, 1, minDims);
+	    		
+	    		if (dimMap.containsKey("spam")) {
+		    		spamStruct = dimMap.get("spam");
+					String spamVal = structAttrValues(spamStruct).get(0);
+	    			if (spamVal == "nonspammer-validated") {
+	    				reqDims.add(structDimName(spamStruct));
+	    				optDims.remove(structDimName(spamStruct));
+	    				// non-spammer, so generate XUnits out to maxDims
+	    	    		dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims));
+	    			}
+	    		}
+	    	} else {
+	    		// event dim is _required_, customs may be present
+	    		if(!dimMap.containsKey("event"))
+	    			throw new RuntimeException("non-global explode must have an event");
+
+	    		// shift dims from optDims to reqDims as needed
+	    		eventStruct = dimMap.get("event");
+	    		reqDims.add(structDimName(eventStruct));
+	        	optDims.remove(structDimName(eventStruct));
+	        	// start with the event by itself -- the minimum valid vector
+	    		dimCombinations = new LinkedList<ICombinatoricsVector<String>>();
+	    		dimCombinations.add(Factory.createVector(reqDims));
+
+	        	String spamVal = null;
+	        	if (dimMap.containsKey("spam")) {
+		    		spamStruct = dimMap.get("spam");
+					spamVal = structAttrValues(spamStruct).get(0);
+	    			if (spamVal == "nonspammer-validated") {
+	    				reqDims.add(structDimName(spamStruct));
+	    				optDims.remove(structDimName(spamStruct));
+	    				// with spam added as required, add the 2-dim vector
+	    	    		dimCombinations.add(Factory.createVector(reqDims));
+	    			}
+		    	}
+
+		    	// shift custom dims from optDims to customDims 
+	    		HashSet<String> customDims = new HashSet<String>();
+		    	for(String key: dimMap.keySet()) {
+		    		if (key.startsWith("custom")) {
+		    			customDims.add(key);
+		    			optDims.remove(key);
+		    		}
+		    	}
+
+		    	// combos without the req dims are unimportant
+		    	minDims = (minDims < reqDims.size()) ? reqDims.size() : minDims;
+
+		    	if (reqDims.contains("spam")) {
+			    	// start with non-custom combos
+			    	dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims));
+
+			    	// add combos that include a custom dim to maxDims+1
+			    	if (!customDims.isEmpty()) {
+			    		dimCombinations.addAll(customCombos(reqDims, customDims, optDims, minDims, maxDims+1));
+			    	}
+		    	} else {
+			    	// spammy non-custom combos to depth of 2
+			    	dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, 2));
+
+			    	// spammy combos that include a custom dim to depth of 3
+			    	//if (!customDims.isEmpty()) {
+			    	//	dimCombinations.addAll(customCombos(reqDims, customDims, optDims, minDims, 3));
+			    	//}
+		    	}
+	    	}
+		}
+
     	
-    	// we handle event and spam dimensions differently, so pull them first
-    	String spamVal = null;
-    	if (dimMap.containsKey("event")) {
-    		eventStruct = dimMap.get("event");
+    	List<XUnitDesc> xunits = generateXUnits(dimCombinations, dimMap);
+    	LOG.debug("pre-sort xunits: " + xunits.size());
+    	if (sort) {
+    		TreeSet<XUnitDesc> xset = new TreeSet<XUnitDesc>(xunits);
+        	LOG.info("post-sort xunits: " + xset.size());
+    		return xset;
     	}
-    	if (dimMap.containsKey("spam")) {
-    		spamStruct = dimMap.get("spam");
-			spamVal = structAttrValues(spamStruct).get(0);
-    	}
-   	
-    	// TODO: pull custom dim structs?
-    	
-    	if (eventStruct != null && !globalFlag) {
-    		// event-centric processing -- all paths _must_have_an_event_
-        	Map<String, Object> reqDimMap = new HashMap<String, Object>(2);
-        	Map<String, Object> optDimMap = new HashMap<String, Object>(dimMap);
-    		reqDimMap.put(structDimName(eventStruct), eventStruct);
-    		optDimMap.remove(structDimName(eventStruct));
-    		if (spamVal == "nonspammer-validated") {
-    			// process to target max depth
-    			reqDimMap.put(structDimName(spamStruct), spamStruct);
-        		optDimMap.remove(structDimName(spamStruct));
-    			dimCombinations = combos(reqDimMap.keySet(), optDimMap.keySet(), maxDims);
-    		} else {
-    			// reduce max depth to 2 (i.e. -- event + spam)
-    			dimCombinations = combos(reqDimMap.keySet(), optDimMap.keySet(), 2);
-    		}
-    	} else if (globalFlag) {
-    		// DAU processing
-    		if (spamVal == "nonspammer-validated") {
-    	    	Map<String, Object> reqDimMap = new HashMap<String, Object>(1);
-    	    	Map<String, Object> optDimMap = new HashMap<String, Object>(dimMap);
-    			// process to max target depth
-    			reqDimMap.put(structDimName(spamStruct), spamStruct);
-        		optDimMap.remove(structDimName(spamStruct));
-        		dimCombinations = combos(reqDimMap.keySet(), optDimMap.keySet(), maxDims);
-    		} else {
-    			// reduce max depth to 2
-    			dimCombinations = combos(Collections.<String>emptySet(), dimMap.keySet(), 2);
-    		}
-    	} else {
-    		// Uh-oh.
-    		LOG.warn("Non-global call on row without event defined. " + 
-    				structCollectionToString(dimMap.values()));
-    	}
-    	
-    	return generateXUnits(dimCombinations, dimMap);
+    	return xunits;
     }
 
-    protected List<ICombinatoricsVector<String>> combos(Set<String> required, Set<String> optional, int maxDepth) {
+    /**
+     * All dims are optional.  This just returns all combinations of the dims
+     * up to the maxDepth.
+     */
+    protected List<ICombinatoricsVector<String>> blindCombos(Set<String> optional, int minDepth, int maxDepth) {
+    	if (maxDepth < minDepth) {
+    		LOG.warn("blindCombos called with maxDepth < minDepth");
+    		return Collections.<ICombinatoricsVector<String>> emptyList();
+    	}
+    	
     	List<ICombinatoricsVector<String>> dimCombos = new LinkedList<ICombinatoricsVector<String>>();
- 
-    	if (required != null && required.size() > maxDepth) {
-    		String m = "Max depth " + maxDepth + " and " + required.size() + " dimensions " + required;
-    		LOG.error(m);
-    		throw new RuntimeException(m);
-    	}
-    	
-    	// get the required combos set up first
-		int rSize = (required != null) ? required.size() : 0;
-		Generator<String> reqGen = null;
-		if (rSize > 0) {
-			ICombinatoricsVector<String> reqVec = Factory.createVector(required);
-			reqGen = Factory.createSimpleCombinationGenerator(reqVec, rSize);
-	    }
-		
-		// now get the subsets of the max-length optional combos
-		int oSize = (optional != null) ? optional.size() : 0;
-		Generator<String> optGen = null;
-		if (oSize > 0 && maxDims > rSize) {
-			ICombinatoricsVector<String> optVec = Factory.createVector(optional);
-			int maxOpt = (oSize > (maxDims - rSize)) ? (maxDims - rSize) : oSize;
-			optGen = Factory.createSimpleCombinationGenerator(optVec, maxOpt);
+		ICombinatoricsVector<String> optVec = Factory.createVector(optional);
+		Generator<String> optGen = Factory.createSimpleCombinationGenerator(optVec, maxDepth);
+		for (ICombinatoricsVector<String> opt : optGen) {
+			dimCombos.add(opt);
 		}
-
-		if (reqGen != null) {
-			for (ICombinatoricsVector<String> root : reqGen) {
-				if (optGen == null) {
-					dimCombos.add(root);
-				} else {
-					for (ICombinatoricsVector<String> opt : optGen) {
-						Generator<String> subGen = Factory.createSubSetGenerator(opt);
-						for (ICombinatoricsVector<String> subOpt : subGen) {
-							int cSz = root.getSize() + subOpt.getSize();
-							List<String> combo = new ArrayList<String>(cSz);
-							combo.addAll(root.getVector());
-							combo.addAll(subOpt.getVector());
-							dimCombos.add(Factory.createVector(combo));
-						}
-					}
-				}
-			}
-		} else if (optGen != null) {
-			for (ICombinatoricsVector<String> opt : optGen) {
-				Generator<String> subGen = Factory.createSubSetGenerator(opt);
-				for (ICombinatoricsVector<String> subOpt : subGen) {
-					dimCombos.add(subOpt);
-				}
-			}
-		}
-    	return dimCombos;
+		if (maxDepth > minDepth)
+			dimCombos.addAll(blindCombos(optional, minDepth, maxDepth-1));
+		return dimCombos;
     }
 
+    /**
+     * Required are required, customs are cycled through, added as required.
+     * This is usually called with a higher depth.  This will ONLY return 
+     * combinations with at least one custom dimension included.
+     */
+    protected List<ICombinatoricsVector<String>> customCombos(Set<String> required, Set<String> custom, Set<String> optional, int minDepth, int maxDepth) {
+    	if (custom == null || custom.isEmpty())
+    		return Collections.<ICombinatoricsVector<String>> emptyList();
+
+    	if (required != null && required.size() + custom.size() == 0)
+    		return Collections.<ICombinatoricsVector<String>> emptyList();
+
+    	if (required == null)
+    		required = new HashSet<String>();
+    	
+    	if ((required.size() + 1) <= maxDepth) {
+        	List<ICombinatoricsVector<String>> customCombos = new LinkedList<ICombinatoricsVector<String>>();
+			Set<String>effCustom = new HashSet<String>(custom); // modifiable
+			for (String cDim : custom) {
+				LOG.debug("cDim: " + cDim);
+				int ersz = required.size() + 1;
+				List<String> effRoot = new ArrayList<String>(required);
+				effRoot.add(cDim);
+				effCustom.remove(cDim); // effCustom shrinks on each loop
+
+				int eosz = optional.size() + effCustom.size();
+				List<String> effOpt = new ArrayList<String>(eosz);
+				effOpt.addAll(optional);
+				effOpt.addAll(effCustom);
+				ICombinatoricsVector<String> effOptVec = Factory.createVector(effOpt);
+				Generator<String> optGen = Factory.createSimpleCombinationGenerator(effOptVec, (maxDepth - ersz));
+				for (ICombinatoricsVector<String> opt : optGen) {
+					LOG.debug("opt: " + opt);
+					int cSz = effRoot.size() + opt.getSize();
+					List<String> combo = new ArrayList<String>(cSz);
+					combo.addAll(effRoot);
+					combo.addAll(opt.getVector());
+					LOG.debug("combo: " + combo);
+					customCombos.add(Factory.createVector(combo));
+				}
+				
+				if (maxDepth > minDepth) {
+					// recurse to get lower depth combos
+					customCombos.addAll(customCombos(required, custom, optional, minDepth, maxDepth-1));
+				}
+			}
+			return customCombos;
+    	}
+    	
+		return Collections.<ICombinatoricsVector<String>> emptyList();
+    }
+    
+    /**
+     * Required are required, optionals are optional.  We do not consider any
+     * customs in this method.  This is usually called with maxDims as maxDepth.
+     */
+    protected List<ICombinatoricsVector<String>> reqCombos(Set<String> required, Set<String> optional, int minDepth, int maxDepth) {
+    	if (required == null || required.isEmpty())
+    		return Collections.<ICombinatoricsVector<String>> emptyList();
+
+    	if (required.size() <= maxDepth) {
+        	List<ICombinatoricsVector<String>> reqCombos = new LinkedList<ICombinatoricsVector<String>>();
+			ICombinatoricsVector<String> effOptVec = Factory.createVector(optional);
+			Generator<String> optGen = Factory.createSimpleCombinationGenerator(effOptVec, (maxDepth - required.size()));
+			for (ICombinatoricsVector<String> opt : optGen) {
+				LOG.debug("opt: " + opt);
+				int cSz = required.size() + opt.getSize();
+				List<String> combo = new ArrayList<String>(cSz);
+				combo.addAll(required);
+				combo.addAll(opt.getVector());
+				LOG.debug("combo: " + combo);
+				reqCombos.add(Factory.createVector(combo));
+			}
+			if (maxDepth > minDepth) {
+				// recurse to get lower depth combos
+				reqCombos.addAll(reqCombos(required, optional, minDepth, maxDepth-1));
+			}
+			return reqCombos;
+    	}
+		return Collections.<ICombinatoricsVector<String>> emptyList();
+    }
     
     protected List<XUnitDesc> generateXUnits(Collection<ICombinatoricsVector<String>> dimCombos, Map<String, Object> dimMap) {
     	List<XUnitDesc> xunits = new LinkedList<XUnitDesc>();
     	for (ICombinatoricsVector<String> combo : dimCombos) {
+    		LOG.debug("generating XUnit from: " + combo);
     		// create a combo-specific list of struct objects
     		List<Object>structList = new ArrayList<Object>(combo.getSize());
     		for (String dim: new TreeSet<String>(combo.getVector()) ) {
     			structList.add(dimMap.get(dim));
     		}
-    		xunits.addAll(rx(structList));
+    		xunits.addAll(recursiveXUnitGeneration(structList));
     	}
     	return xunits;
     }
-
-    protected List<XUnitDesc> rx(List<Object>structList) {
+    
+    protected List<XUnitDesc> recursiveXUnitGeneration(List<Object>structList) {
+    	//
+    	// SLOW! -- hitting generateYPaths ,multiple times, extrac call overhead
+    	//
     	if (structList.size() < 1)
     		throw new RuntimeException("rx() recursed below 1 element");
     	
@@ -266,7 +363,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
     			xunits.add(fromPath(yp));
 			}
     	} else {
-    		for( XUnitDesc sub: rx(structList.subList(1, structList.size()))) {
+    		for( XUnitDesc sub: recursiveXUnitGeneration(structList.subList(1, structList.size()))) {
     	    	for (YPathDesc yp : generateYPaths(struct)) {
     	    		xunits.add(sub.addYPath(yp));
     			}
@@ -274,8 +371,10 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
     	}
     	return xunits;
     }
-
+	
+    ////////////////
 	// struct utils
+    ////////////////
 	protected String structDimName(Object struct) {
     	return structInspector.getStructFieldData(struct, dimField).toString();
     }

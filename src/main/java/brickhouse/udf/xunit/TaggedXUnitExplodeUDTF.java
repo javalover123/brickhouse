@@ -25,7 +25,6 @@ import java.util.List;
 import org.apache.hadoop.hive.ql.exec.Description;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
-import org.apache.hadoop.hive.ql.udf.generic.GenericUDTF;
 import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
@@ -53,7 +52,7 @@ import brickhouse.udf.counter.IncrCounterUDF;
         name="xunit_explode",
         value="_FUNC_(array<struct<dim:string,attr_names:array<string>,attr_values:array<string>>, int, boolean) - ",
         extended="SELECT _FUNC_(uid, ts), uid, ts, event_type from foo;")
-public class TaggedXUnitExplodeUDTF extends GenericUDTF {
+public class TaggedXUnitExplodeUDTF extends XUnitUDTF {
     private static final Logger LOG = Logger.getLogger( XUnitExplodeUDTF.class);
 
     private static final String GLOBAL_UNIT = "/G";
@@ -87,7 +86,7 @@ public class TaggedXUnitExplodeUDTF extends GenericUDTF {
     }
 
 
-    private void incrCounter( String counterName, long counter) {
+    protected void incrCounter( String counterName, long counter) {
         try {
             getReporter().incrCounter("XUnitExplode", counterName, counter);
         } catch ( Exception exc) {
@@ -554,8 +553,7 @@ public class TaggedXUnitExplodeUDTF extends GenericUDTF {
         return results;
     }
 
-    private void forwardXUnit( String xunit) throws HiveException {
-
+    protected void forwardXUnit( String xunit) throws HiveException {
         ///LOG.info(" Forwarding XUnit " + xunit);
         xunitFieldArr[0] = xunit;
         try{

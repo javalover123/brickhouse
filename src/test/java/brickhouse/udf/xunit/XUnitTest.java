@@ -1,16 +1,21 @@
 package brickhouse.udf.xunit;
 
+import static org.mockito.Mockito.*;
+
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 
-import junit.framework.TestCase;
-
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
+import org.junit.Assert;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
-import org.apache.hadoop.hive.ql.udf.generic.GenericUDTF;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.StandardStructObjectInspector;
@@ -19,14 +24,18 @@ import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectIn
 import org.apache.log4j.Logger;
 
 
-public class XUnitTest extends TestCase {
-	private static final Logger LOG = Logger.getLogger( XUnitTest.class);
-	private XUnitExplodeUDTF xploder = null;
+public class XUnitTest {
+	private static final Logger LOG = Logger.getLogger(XUnitTest.class);
+	private XUnitUDTF exploderUDTF = null;
+	private XUnitUDTF xploder = null;
 	private ObjectInspector[] oiList = {
 		ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()),
 		PrimitiveObjectInspectorFactory.javaIntObjectInspector,
 		PrimitiveObjectInspectorFactory.javaBooleanObjectInspector
 	};
+	
+	private HashMap<String, Long> counterMap = new HashMap<String, Long>();
+	private int forwards = 0;
 	
 	// The struct defining segmentation dimensions always has three fields.
 	static String[] fieldNames = {"dim", "attr_names", "attr_values"};
@@ -50,9 +59,9 @@ public class XUnitTest extends TestCase {
 	void validateStructObject(Object struct, String dim, List<String> attrNames, List<String> attrVals) {
 		StandardStructObjectInspector soi = getStructOI();
 		List<? extends StructField> fields = soi.getAllStructFieldRefs();
-		assertEquals(dim, soi.getStructFieldData(struct, fields.get(0)));
-		assertEquals(attrNames, soi.getStructFieldData(struct, fields.get(1)));
-		assertEquals(attrVals, soi.getStructFieldData(struct, fields.get(2)));
+		Assert.assertEquals(dim, soi.getStructFieldData(struct, fields.get(0)));
+		Assert.assertEquals(attrNames, soi.getStructFieldData(struct, fields.get(1)));
+		Assert.assertEquals(attrVals, soi.getStructFieldData(struct, fields.get(2)));
 	}
 	
 	/**
@@ -72,27 +81,6 @@ public class XUnitTest extends TestCase {
 	ArrayList<Object> getStructObject(String dim, List<String> attrNames, List<String> attrVals) {
 		return getStructObject(dim, attrNames, attrVals, true);
 	}
-	
-	@Test
-	public void testProcessOneOne() throws UDFArgumentException, HiveException {
-		XUnitExplodeUDTF xploder = new XUnitExplodeUDTF();
-		ObjectInspector[] oiList = { ObjectInspectorFactory.getStandardListObjectInspector(getStructOI()) };
-		xploder.initialize(oiList);
-		
-		List<String> nList = new ArrayList<String>(1);
-		nList.add(0, "alpha");
-		List<String> vList = new ArrayList<String>(1);
-		vList.add(0, "a");
-		
-		Object struct = getStructObject("adim", nList, vList);
-		validateStructObject(struct, "adim", nList, vList);
-		
-		ArrayList<Object> structList = new ArrayList<Object>(1);
-		structList.add(struct);
-		Object[] dims = { structList };
-		//xploder.process(dims);
-	}
-
 	
 	/**
 	 * Generates an instance of a seg dim struct with two attribute levels.
@@ -188,6 +176,50 @@ public class XUnitTest extends TestCase {
 		return getOneAttrStruct("sex_pref", "pref", sexPrefVal, false);
 	}
 
+	Object[] getMeetmeEventStructArray() {
+		Object[] structs = {
+				// required
+				getEventStruct("meetme"),
+				getSpamStruct("nonspammer-validated"),
+				// custom
+				getOneAttrStruct("custom", "c1_meetme__vote", "Y", false),
+				getOneAttrStruct("custom", "c2_meetme__is_match", "1", false),
+				getOneAttrStruct("custom", "c3_meetme__platform", "Web", false),
+				// optional
+				getAgeStruct("25-34"),
+				getCohortStruct("7"),
+				getEthnicityStruct("Other"),
+				getGenderStruct("F"),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web"),
+				getReligionStruct("O"),
+				getSexPrefStruct("G")
+			};
+		return structs;
+	}
+	
+	Object[] getSpammerMeetmeEventStructArray() {
+		Object[] structs = {
+				// required
+				getEventStruct("meetme"),
+				getSpamStruct("spammer-validated"),
+				// custom
+				getOneAttrStruct("custom", "c1_meetme__vote", "Y", false),
+				getOneAttrStruct("custom", "c2_meetme__is_match", "1", false),
+				getOneAttrStruct("custom", "c3_meetme__platform", "Web", false),
+				// optional
+				getAgeStruct("25-34"),
+				getCohortStruct("7"),
+				getEthnicityStruct("Other"),
+				getGenderStruct("F"),
+				getGeoStruct("NA", "USA", "CA"),
+				getPlatformStruct("Desktop", "Desktop Web"),
+				getReligionStruct("O"),
+				getSexPrefStruct("G")
+			};
+		return structs;
+	}
+	
 	Object[] getProcessArgs(Object[] structs, int max, boolean globalFlag) {
 		ArrayList<Object> structList = new ArrayList<Object>();
 		for (Object struct : structs) {
@@ -202,32 +234,93 @@ public class XUnitTest extends TestCase {
 	Object[] getProcessArgs(Object[] structs) {
 		return getProcessArgs(structs, 3, true);
 	}
-	
-	@Before
-	public void setUp() throws UDFArgumentException {
-		this.xploder = new ConstrainedXUnitExplodeUDTF();
-		this.xploder.initialize(this.oiList);
+
+	@SuppressWarnings("deprecation")
+	void initExploder(Class<? extends XUnitUDTF> exploderClazz) {
+		try {
+			exploderUDTF = (XUnitUDTF)exploderClazz.newInstance();
+			exploderUDTF.initialize(this.oiList);
+			xploder = spy(exploderUDTF);
+
+			//doNothing().when(xploder).incrCounter(anyString(), anyLong());
+			doAnswer(new Answer<Void>() { 
+				public Void answer(InvocationOnMock inv) {
+					Object[] args = inv.getArguments();
+					String counterName = (String)args[0];
+					long counter = (long)args[1];
+					LOG.debug("call to set " + counterName + " to " + counter);
+					counterMap.put(counterName, new Long(counter));
+					return null;
+				}
+			}).when(xploder).incrCounter(anyString(), anyLong());
+
+			//doNothing().when(xploder).forwardXUnit(anyString());
+			doAnswer(new Answer<Void>() { 
+				public Void answer(InvocationOnMock inv) {
+					Object[] args = inv.getArguments();
+					LOG.debug("mocked XUnit forward: " + args[0]);
+					forwards++;
+					return null;
+				}
+			}).when(xploder).forwardXUnit(anyString());
+			
+			
+			
+		} catch (Throwable t) {
+			throw new RuntimeException(t);
+		}
 	}
 	
-	//@Test
-	public void xtestProcessOneOne() throws UDFArgumentException, HiveException {
+	///////////////////////
+	// SET UP / TAKE DOWN
+	///////////////////////
+	
+	@Before
+	public void setUp() { ; }
+	
+	/////////
+	// TESTS
+	/////////
+
+	@Test
+	public void initStandardExploder() {
+		initExploder(XUnitExplodeUDTF.class);
+	}
+	
+	@Test
+	public void initTaggedExploder() {
+		initExploder(TaggedXUnitExplodeUDTF.class);
+	}
+	
+	@Test
+	public void initConstrainedExploder() {
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
+	}
+	
+	@Ignore
+	@Test
+	public void explode1d1a() throws HiveException {
+		initExploder(XUnitExplodeUDTF.class);
 		List<String> nList = new ArrayList<String>(1);
 		nList.add(0, "alpha");
 		List<String> vList = new ArrayList<String>(1);
 		vList.add(0, "a");
 		Object[] structs = { getStructObject("adim", nList, vList) };
-		xploder.process(getProcessArgs(structs));
+		xploder.process(getProcessArgs(structs, 1, true));
 	}
 	
-	//@Test
-	public void xtestProcessOrd() throws UDFArgumentException, HiveException {
+	@Ignore
+	@Test
+	public void explode1d2a() throws HiveException {
+		initExploder(XUnitExplodeUDTF.class);
 		Object[] structs = { getOrdTwoStruct("1", "2") };
 		xploder.process(getProcessArgs(structs));
 	}
 
-	
-	//@Test
-	public void xtestProcessOrdAlpha() throws UDFArgumentException, HiveException {
+	@Ignore
+	@Test
+	public void explode2d() throws HiveException {
+		initExploder(XUnitExplodeUDTF.class);
 		Object[] structs = {
 			getOrdTwoStruct("1", "2"), 
 			getAlphaThreeStruct("a", "b", "c") 
@@ -235,52 +328,146 @@ public class XUnitTest extends TestCase {
 		xploder.process(getProcessArgs(structs));
 	}
 
-	//@Test
-	public void testProcessFourDim() throws UDFArgumentException, HiveException {
+	@Ignore
+	@Test
+	public void explodeEvent4dchoose3() throws HiveException {
+		initExploder(XUnitExplodeUDTF.class);
 		Object[] structs = {
 			getOrdTwoStruct("1", "2"), 
 			getAlphaThreeStruct("a", "b", "c"), 
 			getEventStruct("s_page_view_api"),
 			getSpamStruct("nonspammer-validated")
 		};
-		xploder.process(getProcessArgs(structs, 3, false));
+		int maxDepth = 3;
+		boolean global = false;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
 	}
 
-    @Test
-    public void testEventExplodeXUnit() throws UDFArgumentException, HiveException {
+	@Ignore
+	@Test
+	public void taggedExplodeEvent4dchoose3() throws HiveException {
+		initExploder(TaggedXUnitExplodeUDTF.class);
 		Object[] structs = {
-				getEventStruct("meetme"),
-				getSpamStruct("nonspammer-validated"),
-				getAgeStruct("25-34"),
-				getOneAttrStruct("custom", "c1_profile_view__friends", "NA", false),
-				getOneAttrStruct("custom", "c2_profile_view__platform", "Web", false),
-				getOneAttrStruct("custom", "test", "W2", false),
-				getGeoStruct("NA", "USA", "CA"),
-				getPlatformStruct("Desktop", "Desktop Web")
-			};
+			getOrdTwoStruct("1", "2"), 
+			getAlphaThreeStruct("a", "b", "c"), 
+			getEventStruct("s_page_view_api"),
+			getSpamStruct("nonspammer-validated")
+		};
 		int maxDepth = 3;
-		xploder.process(getProcessArgs(structs, maxDepth, false));
+		boolean global = false;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+	}
+
+	@Ignore
+	@Test
+	public void constrainedExplodeEvent4dchoose3() throws HiveException {
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
+		Object[] structs = {
+			getOrdTwoStruct("1", "2"), 
+			getAlphaThreeStruct("a", "b", "c"), 
+			getEventStruct("s_page_view_api"),
+			getSpamStruct("nonspammer-validated")
+		};
+		int maxDepth = 3;
+		boolean global = false;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+	}
+
+	@Ignore
+    @Test
+    public void eventWithCustomTaggedExplode() throws UDFArgumentException, HiveException {
+		initExploder(TaggedXUnitExplodeUDTF.class);
+		Object[] structs = getMeetmeEventStructArray();
+		int maxDepth = 4;
+		boolean global = false;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+		LOG.info("event w/ customs, taggedExplode: forwards=" + forwards);
+		LOG.info(counterMap);
     }
 
-    //@Test
-    public void xtestEventTaggedExplodeXUnit() throws UDFArgumentException, HiveException {
-		Object[] structs = {
-				getEventStruct("meetme"),
-				getSpamStruct("nonspammer-validated"),
-				getAgeStruct("25-34"),
-				getOneAttrStruct("custom", "c1_profile_view__friends", "NA", false),
-				getOneAttrStruct("custom", "c2_profile_view__platform", "Web", false),
-				getOneAttrStruct("custom", "test", "W2", false),
-				getGeoStruct("NA", "USA", "CA"),
-				getPlatformStruct("Desktop", "Desktop Web")
-			};
-		int maxDepth = 3;
-    	GenericUDTF tXploder = new TaggedXUnitExplodeUDTF();
-		tXploder.process(getProcessArgs(structs, maxDepth, false));
+	@Ignore
+    @Test
+    public void eventWithCustomConstrainedExplode() throws UDFArgumentException, HiveException {
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
+		Object[] structs = getMeetmeEventStructArray();
+		int maxDepth = 4;
+		boolean global = false;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+		LOG.info("event w/ customs, constrained: forwards=" + forwards);
+		LOG.info(counterMap);
     }
 
     @Test
-    public void testDAUExplodeXUnit() throws UDFArgumentException, HiveException {
+    public void eventWithCustomConstrainedExplodex100() throws UDFArgumentException, HiveException {
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
+		Object[] structs = getMeetmeEventStructArray();
+		int maxDepth = 4;
+		boolean global = false;
+		long t0 = System.currentTimeMillis();
+		for (int i=0; i<100; i++) {
+			xploder.process(getProcessArgs(structs, maxDepth, global));
+		}
+		long t1 = System.currentTimeMillis();
+		LOG.info("avg explode time (ms): constrained: " + ((t1-t0) / 100));
+    }
+
+	@Ignore
+    @Test
+    public void compareEventWithCustomExplodes() throws UDFArgumentException, HiveException {
+		Object[] structs = getMeetmeEventStructArray();
+		int maxDepth = 4;
+		boolean global = false;
+    	// explode with ConstrainedXUnitExplodeUDTF
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
+    	final HashSet<String> cSet = new HashSet<String>();
+		doAnswer(new Answer<Void>() { 
+			public Void answer(InvocationOnMock inv) {
+				Object[] args = inv.getArguments();
+				cSet.add((String)args[0]);
+				forwards++;
+				return null;
+			}
+		}).when(xploder).forwardXUnit(anyString());
+
+		long t0 = System.currentTimeMillis();
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+		long t1 = System.currentTimeMillis();
+
+    	// explode with TaggedXUnitExplodeUDTF
+		initExploder(TaggedXUnitExplodeUDTF.class);
+    	final HashSet<String> tSet = new HashSet<String>();
+		doAnswer(new Answer<Void>() { 
+			public Void answer(InvocationOnMock inv) {
+				Object[] args = inv.getArguments();
+				tSet.add((String)args[0]);
+				forwards++;
+				return null;
+			}
+		}).when(xploder).forwardXUnit(anyString());
+		long t2 = System.currentTimeMillis();
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+		long t3 = System.currentTimeMillis();
+		
+		LOG.info("sizes: constrained=" + cSet.size() + ", tagged=" + tSet.size());
+		LOG.info("explode time (ms): constrained: " + (t1-t0) + ", tagged=" + (t3-t2));
+
+		HashSet<String> cc = new HashSet<String>(cSet);
+		cc.removeAll(tSet);
+		LOG.info("in C not T:");
+		for (String cXunit : cc)
+			LOG.info(cXunit);
+		
+		HashSet<String> tc = new HashSet<String>(tSet);
+		tc.removeAll(cSet);
+		LOG.info("\nin T not C:");
+		for (String tXunit : tc)
+			LOG.info(tXunit);
+    }
+    
+	@Ignore
+    @Test
+    public void DAUTaggedExplode() throws UDFArgumentException, HiveException {
+		initExploder(TaggedXUnitExplodeUDTF.class);
 		Object[] structs = {
 				getSpamStruct("nonspammer-validated"),
 				getEventStruct("meetme"),
@@ -289,11 +476,14 @@ public class XUnitTest extends TestCase {
 				getPlatformStruct("Desktop", "Desktop Web")
 			};
 		int maxDepth = 3;
-		xploder.process(getProcessArgs(structs, maxDepth, true));
+		boolean global = true;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
     }
 	
-    //@Test
-    public void xtestDAUTaggedExplodeXUnit() throws UDFArgumentException, HiveException {
+    @Ignore
+    @Test
+    public void DAUConstrainedExplode() throws UDFArgumentException, HiveException {
+		initExploder(ConstrainedXUnitExplodeUDTF.class);
 		Object[] structs = {
 				getSpamStruct("nonspammer-validated"),
 				getEventStruct("meetme"),
@@ -301,8 +491,10 @@ public class XUnitTest extends TestCase {
 				getGeoStruct("NA", "USA", "CA"),
 				getPlatformStruct("Desktop", "Desktop Web")
 			};
-		int maxDepth = 3;
-    	GenericUDTF tXploder = new TaggedXUnitExplodeUDTF();
-    	tXploder.process(getProcessArgs(structs, maxDepth, true));
+		int maxDepth = 4;
+		boolean global = true;
+		xploder.process(getProcessArgs(structs, maxDepth, global));
+		LOG.info("DAU, constrained: forwards=" + forwards);
+		//LOG.info(counterMap);
     }
 }
