@@ -101,6 +101,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 	@Override
 	public void process(Object[] args) throws HiveException {
     	Map<String, Object> dimMap = new HashMap<String, Object>();
+    	Map<String, List<YPathDesc>> ypMap = new HashMap<String, List<YPathDesc>>();
     	for (Object struct: listInspector.getList(args[0])) {
     		String dimName = structDimName(struct);
     		if (dimName == "custom" && structAttrNames(struct).size() > 0) {
@@ -108,6 +109,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
     			dimName = dimName + structAttrNames(struct).get(0);
     		}
     		dimMap.put(dimName, struct);
+    		ypMap.put(dimName, generateYPaths(struct));
     	}
     	
 		if(maxDimInspector != null) {
@@ -122,15 +124,16 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 		}
 		
 		try {
-			Collection<XUnitDesc> xunits = constrainedExplode(dimMap, false);
+			Collection<XUnitDesc> xunits = constrainedExplode(dimMap, ypMap, false);
+			/*
 			for (XUnitDesc xunit : xunits) {
 				if(shouldIncludeXUnit(xunit)) {
 					forwardXUnit(xunit.toString());
 				} else {
 					LOG.warn("unexpected filter kick-in for " + xunit.toString());
 				}
-			}
-			incrCounter("NumXUnits", xunits.size());
+			}*/
+			//incrCounter("NumXUnits", xunits.size());
 		} catch(IllegalArgumentException illArg) {
 			LOG.error("Error generating XUnits", illArg);
 		}
@@ -139,11 +142,13 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 	//////////////////////////
 	// class-specific methods
 	//////////////////////////
-    protected Collection<XUnitDesc> constrainedExplode(Map<String, Object> dimMap, boolean sort) {
+    protected Collection<XUnitDesc> constrainedExplode(Map<String, Object> dimMap, Map<String, List<YPathDesc>> ypMap, boolean sort) throws HiveException {
     	Collection<ICombinatoricsVector<String>> dimCombinations = null;
+    	//List<XUnitDesc> xunits = new LinkedList<XUnitDesc>();
+    	
     	int minDims = (maxDims <= 2) ? maxDims : 2;
 
-		if (maxDims > minDims) {
+		if (maxDims >= minDims) {
 			// for combinations, we work with the map keys only
 	    	HashSet<String> reqDims = new HashSet<String>();
 	    	HashSet<String> optDims = new HashSet<String>(dimMap.keySet());
@@ -152,7 +157,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 		    	// for DAU (i.e. -- globalFlag==true), all optional & no custom dims
 
 	    		// first grab all the [1,minDims] combos
-				dimCombinations = blindCombos(optDims, 1, minDims);
+				dimCombinations = blindCombos(optDims, 1, minDims, ypMap);
 	    		
 	    		if (dimMap.containsKey("spam")) {
 		    		spamStruct = dimMap.get("spam");
@@ -161,7 +166,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 	    				reqDims.add(structDimName(spamStruct));
 	    				optDims.remove(structDimName(spamStruct));
 	    				// non-spammer, so generate XUnits out to maxDims
-	    	    		dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims));
+	    	    		dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims, null, ypMap));
 	    			}
 	    		}
 	    	} else {
@@ -171,12 +176,19 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 
 	    		// shift dims from optDims to reqDims as needed
 	    		eventStruct = dimMap.get("event");
-	    		reqDims.add(structDimName(eventStruct));
-	        	optDims.remove(structDimName(eventStruct));
+	    		reqDims.add("event");
+	        	optDims.remove("event");
 	        	// start with the event by itself -- the minimum valid vector
 	    		dimCombinations = new LinkedList<ICombinatoricsVector<String>>();
 	    		dimCombinations.add(Factory.createVector(reqDims));
 
+	    		// define the root (required) xunit
+	    		XUnitDesc xunit = new XUnitDesc(ypMap.get("event").get(0));
+				//for (YPathDesc yp: ypMap.get("event")) {
+				//	xunit = (xunit==null) ? new XUnitDesc(yp) : xunit.addYPath(yp);
+				//}
+	    		forwardXUnit(xunit.toString());
+	    		
 	        	String spamVal = null;
 	        	if (dimMap.containsKey("spam")) {
 		    		spamStruct = dimMap.get("spam");
@@ -186,6 +198,10 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 	    				optDims.remove(structDimName(spamStruct));
 	    				// with spam added as required, add the 2-dim vector
 	    	    		dimCombinations.add(Factory.createVector(reqDims));
+	    	    		
+	    	    		// update root xunit
+	    	    		xunit = xunit.addYPath(ypMap.get("spam").get(0));
+	    	    		forwardXUnit(xunit.toString());
 	    			}
 		    	}
 
@@ -203,15 +219,21 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 
 		    	if (reqDims.contains("spam")) {
 			    	// start with non-custom combos
-			    	dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims));
+			    	dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, maxDims, xunit, ypMap));
 
 			    	// add combos that include a custom dim to maxDims+1
 			    	if (!customDims.isEmpty()) {
-			    		dimCombinations.addAll(customCombos(reqDims, customDims, optDims, minDims, maxDims+1));
+			    		dimCombinations.addAll(customCombos(reqDims, customDims, optDims, minDims, maxDims+1, xunit, ypMap));
 			    	}
 		    	} else {
+		    		HashSet<String> spammyDims = new HashSet<String>(reqDims);
+		    		spammyDims.add(structDimName(spamStruct));
+		    		dimCombinations.add(Factory.createVector(spammyDims));
+		    		
+		    		//ypCombinations.add(Factory.createVector(generateYPaths(eventStruct)));
+		    		
 			    	// spammy non-custom combos to depth of 2
-			    	dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, 2));
+			    	//dimCombinations.addAll(reqCombos(reqDims, optDims, minDims, 2));
 
 			    	// spammy combos that include a custom dim to depth of 3
 			    	//if (!customDims.isEmpty()) {
@@ -220,23 +242,25 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 		    	}
 	    	}
 		}
-
-    	
-    	List<XUnitDesc> xunits = generateXUnits(dimCombinations, dimMap);
-    	LOG.debug("pre-sort xunits: " + xunits.size());
-    	if (sort) {
-    		TreeSet<XUnitDesc> xset = new TreeSet<XUnitDesc>(xunits);
-        	LOG.info("post-sort xunits: " + xset.size());
-    		return xset;
-    	}
-    	return xunits;
+		
+    	//List<XUnitDesc> xunits = generateXUnits(dimCombinations, dimMap);
+    	//LOG.debug("pre-sort xunits: " + xunits.size());
+    	//if (sort) {
+    	//	TreeSet<XUnitDesc> xset = new TreeSet<XUnitDesc>(xunits);
+        //	LOG.info("post-sort xunits: " + xset.size());
+    	//	return xset;
+    	//}
+    	//return xunits;
+		return null;
     }
 
     /**
      * All dims are optional.  This just returns all combinations of the dims
      * up to the maxDepth.
      */
-    protected List<ICombinatoricsVector<String>> blindCombos(Set<String> optional, int minDepth, int maxDepth) {
+    protected List<ICombinatoricsVector<String>> blindCombos(Set<String> optional, int minDepth, int maxDepth, Map<String, List<YPathDesc>> ypMap) 
+    	throws HiveException
+    {
     	if (maxDepth < minDepth) {
     		LOG.warn("blindCombos called with maxDepth < minDepth");
     		return Collections.<ICombinatoricsVector<String>> emptyList();
@@ -246,10 +270,18 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 		ICombinatoricsVector<String> optVec = Factory.createVector(optional);
 		Generator<String> optGen = Factory.createSimpleCombinationGenerator(optVec, maxDepth);
 		for (ICombinatoricsVector<String> opt : optGen) {
+			XUnitDesc xunit = null;
+			for (String dim: opt.getVector()) {
+				for (YPathDesc yp: ypMap.get(dim)) {
+					xunit = (xunit==null) ? new XUnitDesc(yp) : xunit.addYPath(yp);
+				}
+			}
+			forwardXUnit(xunit.toString());
+
 			dimCombos.add(opt);
 		}
 		if (maxDepth > minDepth)
-			dimCombos.addAll(blindCombos(optional, minDepth, maxDepth-1));
+			dimCombos.addAll(blindCombos(optional, minDepth, maxDepth-1, ypMap));
 		return dimCombos;
     }
 
@@ -258,7 +290,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
      * This is usually called with a higher depth.  This will ONLY return 
      * combinations with at least one custom dimension included.
      */
-    protected List<ICombinatoricsVector<String>> customCombos(Set<String> required, Set<String> custom, Set<String> optional, int minDepth, int maxDepth) {
+    protected List<ICombinatoricsVector<String>> customCombos(Set<String> required, Set<String> custom, Set<String> optional, int minDepth, int maxDepth, XUnitDesc root, Map<String, List<YPathDesc>> ypMap) throws HiveException {
     	if (custom == null || custom.isEmpty())
     		return Collections.<ICombinatoricsVector<String>> emptyList();
 
@@ -278,6 +310,33 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 				effRoot.add(cDim);
 				effCustom.remove(cDim); // effCustom shrinks on each loop
 
+				for (YPathDesc yp: ypMap.get(cDim)) {
+					XUnitDesc xunit = root.addYPath(yp);
+					int eosz = optional.size() + effCustom.size();
+					List<String> effOpt = new ArrayList<String>(eosz);
+					effOpt.addAll(optional);
+					effOpt.addAll(effCustom);
+					ICombinatoricsVector<String> effOptVec = Factory.createVector(effOpt);
+					Generator<String> optGen = Factory.createSimpleCombinationGenerator(effOptVec, (maxDepth - ersz));
+					for (ICombinatoricsVector<String> opt : optGen) {
+						for (String dim: opt.getVector()) {
+							for (YPathDesc ypSub: ypMap.get(dim)) {
+								XUnitDesc xunitSub = xunit.addYPath(ypSub);
+								forwardXUnit(xunitSub.toString());
+
+								if (maxDepth > minDepth) {
+									// recurse to get lower depth combos
+									HashSet<String> subRequired = new HashSet<String>(effRoot);
+									subRequired.add(dim);
+									HashSet<String> subOpt = new HashSet<String>(effOpt);
+									subOpt.remove(dim);
+									customCombos.addAll(customCombos(subRequired, new HashSet<String>(effCustom), subOpt, minDepth, maxDepth-1, xunitSub, ypMap));
+								}
+							}
+						}
+					}
+				}
+				
 				int eosz = optional.size() + effCustom.size();
 				List<String> effOpt = new ArrayList<String>(eosz);
 				effOpt.addAll(optional);
@@ -296,7 +355,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 				
 				if (maxDepth > minDepth) {
 					// recurse to get lower depth combos
-					customCombos.addAll(customCombos(required, custom, optional, minDepth, maxDepth-1));
+					customCombos.addAll(customCombos(required, custom, optional, minDepth, maxDepth-1, root, ypMap));
 				}
 			}
 			return customCombos;
@@ -309,7 +368,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
      * Required are required, optionals are optional.  We do not consider any
      * customs in this method.  This is usually called with maxDims as maxDepth.
      */
-    protected List<ICombinatoricsVector<String>> reqCombos(Set<String> required, Set<String> optional, int minDepth, int maxDepth) {
+    protected List<ICombinatoricsVector<String>> reqCombos(Set<String> required, Set<String> optional, int minDepth, int maxDepth, XUnitDesc root, Map<String, List<YPathDesc>> ypMap) throws HiveException {
     	if (required == null || required.isEmpty())
     		return Collections.<ICombinatoricsVector<String>> emptyList();
 
@@ -325,11 +384,26 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
 				combo.addAll(opt.getVector());
 				LOG.debug("combo: " + combo);
 				reqCombos.add(Factory.createVector(combo));
+
+				for (String dim: opt.getVector()) {
+					for (YPathDesc yp: ypMap.get(dim)) {
+						XUnitDesc xunit = root.addYPath(yp);
+						forwardXUnit(xunit.toString());
+						if (maxDepth > minDepth) {
+							// recurse to get lower depth combos
+							HashSet<String> subOpt = new HashSet<String>(optional);
+							subOpt.remove(dim);
+							reqCombos.addAll(reqCombos(required, subOpt, minDepth, maxDepth-1, xunit, ypMap));
+						}
+					
+					}
+				}
+			
 			}
-			if (maxDepth > minDepth) {
+			//if (maxDepth > minDepth) {
 				// recurse to get lower depth combos
-				reqCombos.addAll(reqCombos(required, optional, minDepth, maxDepth-1));
-			}
+			//	reqCombos.addAll(reqCombos(required, optional, minDepth, maxDepth-1, root, ypMap));
+			//}
 			return reqCombos;
     	}
 		return Collections.<ICombinatoricsVector<String>> emptyList();
@@ -337,6 +411,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
     
     protected List<XUnitDesc> generateXUnits(Collection<ICombinatoricsVector<String>> dimCombos, Map<String, Object> dimMap) {
     	List<XUnitDesc> xunits = new LinkedList<XUnitDesc>();
+
     	for (ICombinatoricsVector<String> combo : dimCombos) {
     		LOG.debug("generating XUnit from: " + combo);
     		// create a combo-specific list of struct objects
@@ -348,7 +423,7 @@ public class ConstrainedXUnitExplodeUDTF extends XUnitExplodeUDTF {
     	}
     	return xunits;
     }
-    
+
     protected List<XUnitDesc> recursiveXUnitGeneration(List<Object>structList) {
     	//
     	// SLOW! -- hitting generateYPaths ,multiple times, extrac call overhead

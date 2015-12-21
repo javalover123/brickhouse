@@ -389,6 +389,15 @@ public class XUnitTest {
     @Test
     public void eventWithCustomConstrainedExplode() throws UDFArgumentException, HiveException {
 		initExploder(ConstrainedXUnitExplodeUDTF.class);
+		doAnswer(new Answer<Void>() { 
+			public Void answer(InvocationOnMock inv) {
+				Object[] args = inv.getArguments();
+				LOG.info((String)args[0]);
+				forwards++;
+				return null;
+			}
+		}).when(xploder).forwardXUnit(anyString());
+		
 		Object[] structs = getMeetmeEventStructArray();
 		int maxDepth = 4;
 		boolean global = false;
@@ -397,7 +406,8 @@ public class XUnitTest {
 		LOG.info(counterMap);
     }
 
-    @Test
+	@Ignore
+	@Test
     public void eventWithCustomConstrainedExplodex100() throws UDFArgumentException, HiveException {
 		initExploder(ConstrainedXUnitExplodeUDTF.class);
 		Object[] structs = getMeetmeEventStructArray();
@@ -411,7 +421,6 @@ public class XUnitTest {
 		LOG.info("avg explode time (ms): constrained: " + ((t1-t0) / 100));
     }
 
-	@Ignore
     @Test
     public void compareEventWithCustomExplodes() throws UDFArgumentException, HiveException {
 		Object[] structs = getMeetmeEventStructArray();

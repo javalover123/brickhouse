@@ -22,6 +22,7 @@ package brickhouse.udf.xunit;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.List;
+
 import org.apache.hadoop.hive.ql.exec.Description;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
@@ -150,7 +151,8 @@ public class TaggedXUnitExplodeUDTF extends XUnitUDTF {
                 || ((PrimitiveObjectInspector)dimField.getFieldObjectInspector()).getPrimitiveCategory() != PrimitiveCategory.STRING) {
             usage("dim field must be a string");
         }
-        StringObjectInspector dimInspector = (StringObjectInspector) dimField.getFieldObjectInspector();
+        @SuppressWarnings("unused")
+		StringObjectInspector dimInspector = (StringObjectInspector) dimField.getFieldObjectInspector();
 
         attrNamesField = structInspector.getStructFieldRef("attr_names");
         if(attrNamesField == null) {
@@ -202,7 +204,8 @@ public class TaggedXUnitExplodeUDTF extends XUnitUDTF {
 
     @Override
     public void process(Object[] args) throws HiveException {
-        List<Object>  dimValuesList = (List<Object>) listInspector.getList(args[0]);
+        @SuppressWarnings("unchecked")
+		List<Object>  dimValuesList = (List<Object>) listInspector.getList(args[0]);
         boolean eventProcess=false;
         if( globalFlagInspector != null ) {
             boolean globalFlag = globalFlagInspector.get( args[2]);
