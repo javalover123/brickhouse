@@ -92,6 +92,7 @@ CREATE TEMPORARY FUNCTION hbase_put AS 'brickhouse.hbase.PutUDF';
 CREATE TEMPORARY FUNCTION hbase_batch_put_columns AS 'brickhouse.hbase.BatchMultiColumnPutUDF';
 CREATE TEMPORARY FUNCTION hbase_multicolumn_put AS 'brickhouse.hbase.MultiColumnPutUDAF';
 CREATE TEMPORARY FUNCTION hbase_array_value_put AS 'brickhouse.hbase.ArrayValuePutUDF';
+CREATE TEMPORARY FUNCTION hbase_multicolumn_with_sketchset_put AS 'brickhouse.hbase.MultiColumnWithSketchsetPutUDAF';
 
 CREATE TEMPORARY FUNCTION salted_bigint_key AS 'brickhouse.hbase.SaltedBigIntUDF';
 CREATE TEMPORARY FUNCTION hbase_batch_delete AS 'brickhouse.hbase.BatchDeleteUDAF';

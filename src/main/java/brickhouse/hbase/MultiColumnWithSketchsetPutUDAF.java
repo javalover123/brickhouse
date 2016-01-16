@@ -30,6 +30,7 @@ import org.apache.hadoop.hive.serde2.objectinspector.*;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.PrimitiveObjectInspectorFactory;
 import org.apache.hadoop.hive.serde2.objectinspector.primitive.StringObjectInspector;
 import org.apache.hadoop.hive.serde2.typeinfo.TypeInfo;
+import org.apache.hadoop.io.*;
 import org.apache.hadoop.mapred.Reporter;
 import org.apache.log4j.Logger;
 
@@ -42,47 +43,38 @@ import java.util.Map;
 import java.util.Map.Entry;
 
 /**
- * Insert into HBase by doing bulk puts on multiple columns and values from an aggregate function call.
- * hbase_multicolumn_put function expects following arguments in the below order:
+ * Insert into HBase by doing bulk puts on multiple columns, values, and sketchsets from an aggregate function call.
+ * hbase_multicolumn_with_sketchset_put function expects following arguments in the below order:
  *   1. configuration map
  *   2. hbase key value
  *   3. Array of hbase column qualifiers
  *   4. Array of values
+ *   5. Sketchset column qualifier
+ *   6. Sketchset of user ids (array of user ids)
  *
  * Example below:
  *
- *   select hbase_multicolumn_put( map("table_name", "mytable",
- *                                     "family", "m",
- *                                     "hbase.zookeeper.quorum", "localhost:2181",
- *                                     "zookeeper.znode.parent", "/",
- *                                     "batch_size", "25000",
- *                                     "write_buffer_size_mb", "12",
- *                                     "disable_auto_flush", "true" ),
- *                                 "abc:20150422",
- *                                 array("colqual1', "colqual2"),
- *                                 array(123456, 3445566) )
+ *   select hbase_multicolumn_with_sketchset_put( map("table_name", "mytable",
+ *                                                    "family", "m,s",
+ *                                                    "hbase.zookeeper.quorum", "localhost:2181",
+ *                                                    "zookeeper.znode.parent", "/",
+ *                                                    "batch_size", "25000",
+ *                                                    "write_buffer_size_mb", "12",
+ *                                                    "disable_auto_flush", "true" ),
+ *                                                "abc:20150422",
+ *                                                array("colqual1', "colqual2"),
+ *                                                array(123456, 3445566),
+ *                                                "sk",
+ *                                                "array(123456, 234567, 345678) )
  *
- * This function also supports various value types (longs, ints, string, doubles) to be passed into the array as long
- * as they are casted into Strings and the hbase column qualifier specifies how to insert the value into hbase.
- * The example below, inserts both long and double values into hbase column qualifiers "qual1:l" and "qual2:d":
- *
- *   select hbase_multicolumn_put( map("table_name", "mytable",
- *                                     "family", "m",
- *                                     "hbase.zookeeper.quorum", "localhost:2181",
- *                                     "zookeeper.znode.parent", "/",
- *                                     "batch_size", "25000",
- *                                     "write_buffer_size_mb", "12",
- *                                     "disable_auto_flush", "true" ),
- *                                 "abc:20150422",
- *                                 array("qual1:l', "qual2:d"),
- *                                 array(cast(123456 as string), cast(3445566.879 as string)) )
+ *@author Marcin Michalski
  */
 
-@Description(name = "hbase_multicolumn_put",
-        value = "_FUNC_(config_map, key, array(column_qualifiers) array(values) ) - Perform batch HBase updates of a table "
+@Description(name = "hbase_multicolumn_with_sketchset_put",
+        value = "_FUNC_(config_map, key, array(column_qualifiers), array(values) ) - Perform batch HBase updates of a table "
 )
-public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
-    private static final Logger LOG = Logger.getLogger(MultiColumnPutUDAF.class);
+public class MultiColumnWithSketchsetPutUDAF extends AbstractGenericUDAFResolver {
+    private static final Logger LOG = Logger.getLogger(MultiColumnWithSketchsetPutUDAF.class);
 
     @Override
     public GenericUDAFEvaluator getEvaluator(TypeInfo[] parameters)
@@ -127,25 +119,39 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                 putList = new ArrayList<Put>();
             }
 
-            public void addColumnsAndValues(byte[] key, List<byte[]> colQuals, List<byte[]> values) throws HiveException {
+            //Adds the metric and sketch set puts ito the put buffer
+            public void addColumnsAndValues(byte[] key, List<byte[]> colQuals, List<byte[]> values,
+                                            byte[] skethColQual, byte[] sketchSet) throws HiveException
+            {
+                //First create metric column family put
                 Put thePut = new Put(key);
 
                 //Disable WAL writes when specified in config map
                 if (disableWAL) thePut.setDurability(Durability.SKIP_WAL);
                 // Loop through columns and values and add them to single put
-                byte[] family = getFamily();
+                byte[] family = getMetricFamily();
                 for(int i=0; i<colQuals.size(); i++) {
                     thePut.add(family, colQuals.get(i), values.get(i));
                 }
-
                 putList.add(thePut);
+
+                //Second create sketchset column family put
+                Put sketchPut = new Put(key);
+                //Disable WAL writes when specified in config map
+                if (disableWAL) sketchPut.setDurability(Durability.SKIP_WAL);
+                family = getSketchSetFamily();
+                sketchPut.add(family, skethColQual, sketchSet);
+
+                putList.add(sketchPut);
             }
         }
 
+        private byte[] getSketchSetFamily() {
+            return sketchSetColumnFamily.getBytes();
+        }
 
-        private byte[] getFamily() {
-            String famStr = configMap.get(HTableFactory.FAMILY_TAG);
-            return famStr.getBytes();
+        private byte[] getMetricFamily() {
+           return metricColumnFamily.getBytes();
         }
 
 
@@ -166,11 +172,17 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
         private PrimitiveObjectInspector valueInspector;
         private ListObjectInspector listColumnQualInspector;
         private ListObjectInspector listColumnValInspector;
+        private PrimitiveObjectInspector sketchSetColumnQualOI;
+        private ListObjectInspector listSketchSetValInspector;
+        private StringObjectInspector sketchSetValInspector;
+
 
         // For PARTIAL2 and FINAL: ObjectInspectors for partial aggregations (list
         // of objs)
         private StandardListObjectInspector listKVOI;
         private Map<String, String> configMap;
+        private String metricColumnFamily;
+        private String sketchSetColumnFamily;
 
         private HTable table;
 
@@ -199,6 +211,10 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                 columnInspector = (StringObjectInspector) listColumnQualInspector.getListElementObjectInspector();
                 valueInspector = (PrimitiveObjectInspector) listColumnValInspector.getListElementObjectInspector();
 
+                sketchSetColumnQualOI = (PrimitiveObjectInspector) parameters[4];
+                listSketchSetValInspector = (ListObjectInspector) parameters[5];
+                sketchSetValInspector = (StringObjectInspector) listSketchSetValInspector.getListElementObjectInspector();
+
                 try {
                     LOG.info(" Initializing HTable ");
                     table = HTableFactory.getHTable(configMap);
@@ -221,6 +237,10 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                         LOG.info("Setting hbase write buffer size to: " + writeBufferSizeBytes);
                         writeBufferSizeBytes = Integer.parseInt(configMap.get(WRITE_BUFFER_SIZE_MB)) * 1024 * 1024;
                     }
+
+                    String[] columnFamilies = configMap.get(HTableFactory.FAMILY_TAG).split(",");
+                    metricColumnFamily = columnFamilies[0];
+                    sketchSetColumnFamily = columnFamilies[1];
                 } catch (IOException e) {
                     throw new HiveException(e);
                 }
@@ -304,9 +324,6 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                     valueBytes = HTableFactory.getByteArray(uninspVal, valueInspector);
                 }
 
-                //String columnQualifier = columnInspector.getPrimitiveJavaObject(uninspCol);
-                //String value = valueInspector.getPrimitiveJavaObject(uninspVal).toString();
-                //LOG.info("key: " + Bytes.toString(key) + " column: " + columnQualifier + " value: " + value);
 
                 if (key != null) {
                     if( valueBytes != null && colQualBytes != null) {
@@ -318,13 +335,24 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                 }
             }
 
+            //Setup sketch sets
+            byte[] sketchColQual = HTableFactory.getByteArray( parameters[4], sketchSetColumnQualOI);
+            Object listSketchSetObj = parameters[5];
+            int sketchSetSize = listSketchSetValInspector.getListLength(listSketchSetObj);
+            List<String> sketchSet = new ArrayList<String>();
+            for(int i=0; i<sketchSetSize; ++i) {
+                Object uninspValue = listSketchSetValInspector.getListElement(listSketchSetObj, i);
+                sketchSet.add(sketchSetValInspector.getPrimitiveJavaObject(uninspValue));
+            }
+            byte[] sketchSetBytes = WritableUtils.toByteArray(SketchSetSerde.serialize(sketchSet));
+
             PutBuffer kvBuff = (PutBuffer) agg;
             if (kvBuff.putList.size() >= batchSize) {
                 batchUpdate(kvBuff, false);
             }
 
             if(values.size() > 0) {
-                kvBuff.addColumnsAndValues(key, columns, values);
+                kvBuff.addColumnsAndValues(key, columns, values, sketchColQual, sketchSetBytes);
             } else {
                 getReporter().getCounter(MultiColumnPutUDAFCounter.NULL_VALUES_INSERT_FAILURE).increment(1);
             }
@@ -376,6 +404,11 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
             configMap.put(HTableFactory.ZOOKEEPER_QUORUM_TAG, zookeeper);
             String family = ((StringObjectInspector) (subListOI.getListElementObjectInspector())).getPrimitiveJavaObject(first.get(2));
             configMap.put(HTableFactory.FAMILY_TAG, family);
+
+            String[] columnFamilies = family.split(",");
+            metricColumnFamily = columnFamilies[0];
+            sketchSetColumnFamily = columnFamilies[1];
+
             // Include arbitrary configurations, by adding strings of the form k=v
             for (int j = 3; j < first.size(); ++j) {
                 String kvStr = ((StringObjectInspector) (subListOI.getListElementObjectInspector())).getPrimitiveJavaObject(first.get(j));
@@ -409,7 +442,17 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
                     values.add(value.getBytes());
                 }
 
-                myagg.addColumnsAndValues(key.getBytes(), columns, values);
+                //Setup sketch sets
+                String sketchColQual = ((StringObjectInspector) (subListOI.getListElementObjectInspector())).getPrimitiveJavaObject(kvList.get(3));
+                List uninspSketchSet = subListOI.getList(kvList.get(3));
+                List<String> sketchSet = new ArrayList<String>();
+                for(int j=0; j<uninspSketchSet.size(); ++j) {
+                    Object uninspValue = strInspector.getPrimitiveJavaObject(uninspSketchSet.get(j));
+                    sketchSet.add(sketchSetValInspector.getPrimitiveJavaObject(uninspValue));
+                }
+                byte[] sketchSetBytes = WritableUtils.toByteArray(SketchSetSerde.serialize(sketchSet));
+
+                myagg.addColumnsAndValues(key.getBytes(), columns, values, sketchColQual.getBytes(), sketchSetBytes);
             }
 
             if (myagg.putList.size() >= batchSize) {
@@ -487,5 +530,32 @@ public class MultiColumnPutUDAF extends AbstractGenericUDAFResolver {
 
     private static enum MultiColumnPutUDAFCounter {
         NULL_KEY_INSERT_FAILURE, NULL_VALUES_INSERT_FAILURE, NUMBER_OF_SUCCESSFUL_PUTS, NUMBER_OF_BATCH_OPERATIONS;
+    }
+
+
+    /**
+     * Wrapper class for serializing sketch set into HDFS Writable object
+     */
+    public static class SketchSetSerde {
+        public static Writable serialize(List<String> sketchSet) throws HiveException {
+            Writable[] content = new Writable[sketchSet.size()];
+            for (int i = 0; i < content.length; i++) {
+                //content[i] = new Text(sketchSet.get(i));
+                content[i] = new LongWritable(Long.parseLong(sketchSet.get(i)));
+            }
+
+            return new ArrayWritable(LongWritable.class, content);
+            //return new ArrayWritable(Text.class, content);
+        }
+
+        public static List<String> deserialize(ArrayWritable writable) {
+            Writable[] writables = ((ArrayWritable) writable).get();
+            List<String> list = new ArrayList<String>(writables.length);
+            for (Writable wrt : writables) {
+                //list.add(((Text) wrt).toString());
+                list.add(((LongWritable) wrt).toString());
+            }
+            return list;
+        }
     }
 }
