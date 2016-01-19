@@ -29,7 +29,13 @@ public class SpamDetector extends UDF {
             dtFormatter = org.joda.time.format.DateTimeFormat.forPattern("YYYYMMdd");
 
         Long interestedDate = Long.parseLong(interested_date);
-        Long minDate = toYYYYMMDD(getMin(getMin(date_cancelled,date_boxed),date_spammer_added), dtFormatter);
+        Long minDate = getMin(getMin(date_cancelled,date_boxed),date_spammer_added);
+        if(minDate == null)
+            minDate = 0L;
+        else
+            minDate = toYYYYMMDD(minDate, dtFormatter);
+
+
         Long minDate2 =  getMin(date_cancelled,date_boxed);
         if(minDate2==null)
             minDate2=0L;
@@ -59,10 +65,4 @@ public class SpamDetector extends UDF {
 
         return isSpammer;
     }
-
-    public static void main(String[] args) {
-        SpamDetector sd = new SpamDetector();
-        System.out.println(sd.evaluate("20160105", null, null, 1437849497000L, 1437855877000L));
-    }
-
 }
