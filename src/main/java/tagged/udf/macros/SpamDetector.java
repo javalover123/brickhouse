@@ -59,10 +59,4 @@ public class SpamDetector extends UDF {
 
         return isSpammer;
     }
-
-    public static void main(String[] args) {
-        SpamDetector sd = new SpamDetector();
-        System.out.println(sd.evaluate("20160105", null, null, 1437849497000L, 1437855877000L));
-    }
-
 }
