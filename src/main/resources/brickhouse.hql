@@ -110,3 +110,7 @@ CREATE TEMPORARY FUNCTION xunit_explode AS 'brickhouse.udf.xunit.XUnitExplodeUDT
 CREATE TEMPORARY FUNCTION get_ypath AS 'brickhouse.udf.xunit.GetYPathUDF';
 CREATE TEMPORARY FUNCTION remove_ypath AS 'brickhouse.udf.xunit.RemoveYPathUDF';
 CREATE TEMPORARY FUNCTION getsegments AS 'brickhouse.udf.xunit.GetYPathSegmentsUDF';
+
+
+CREATE TEMPORARY FUNCTION get_brand AS 'brickhouse.udf.tagged.GetBrandUDF';
+CREATE TEMPORARY FUNCTION get_continent AS 'brickhouse.udf.tagged.ContinentLookupUDF';
