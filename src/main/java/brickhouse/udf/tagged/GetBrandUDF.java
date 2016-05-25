@@ -18,7 +18,7 @@ public class GetBrandUDF extends UDF {
         } else {
             if (type == -1)
                 return BRAND_HI5;
-            else if (type == -2)
+            else if (type == 5)
                 return BRAND_ONE;
             else
                 return BRAND_TAGGED;
