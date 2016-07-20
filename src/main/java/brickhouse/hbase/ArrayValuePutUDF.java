@@ -83,7 +83,8 @@ public class ArrayValuePutUDF extends GenericUDF {
                columnValues.add(valueInspector.getPrimitiveJavaObject(uninspValue));
 	       }
 
-           if(key != null && columnValues.size() > 0) {
+           // Make sure that key is present but allow for empty array to be inserted into hbase cf
+           if(key != null) {
                Put thePut = new Put(key.getBytes());
 
                //Serialize values into byte array
@@ -97,8 +98,7 @@ public class ArrayValuePutUDF extends GenericUDF {
 
                getReporter().incrCounter(ArrayValuePutUDFCounter.NUMBER_OF_SUCCESSFUL_PUTS, 1);
            } else {
-               System.out.println("Null key or no values for key: " + key + " number of values: " + columnValues.size());
-               getReporter().incrCounter(ArrayValuePutUDFCounter.NULL_KEY_OR_VALUE_INSERT_FAILURE, 1);
+               getReporter().incrCounter(ArrayValuePutUDFCounter.NULL_KEY_INSERT_FAILURE, 1);
            }
 	      
 	       return "Put " + listValLen + " values for key: " + key + " into " + table.getName() + " Family "
@@ -188,6 +188,6 @@ public class ArrayValuePutUDF extends GenericUDF {
     }
 
     private static enum ArrayValuePutUDFCounter {
-        NULL_KEY_OR_VALUE_INSERT_FAILURE, NUMBER_OF_SUCCESSFUL_PUTS;
+        NULL_KEY_INSERT_FAILURE, NUMBER_OF_SUCCESSFUL_PUTS;
     }
 }
