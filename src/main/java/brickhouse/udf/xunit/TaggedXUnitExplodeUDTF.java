@@ -26,6 +26,7 @@ import org.apache.hadoop.hive.ql.exec.Description;
 import org.apache.hadoop.hive.ql.exec.UDFArgumentException;
 import org.apache.hadoop.hive.ql.metadata.HiveException;
 import org.apache.hadoop.hive.ql.udf.generic.GenericUDTF;
+import org.apache.hadoop.hive.serde2.lazy.LazyArray;
 import org.apache.hadoop.hive.serde2.objectinspector.ListObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector;
 import org.apache.hadoop.hive.serde2.objectinspector.ObjectInspector.Category;
@@ -607,58 +608,78 @@ public class TaggedXUnitExplodeUDTF extends GenericUDTF {
         return noSlash;
     }
 
-    private List<YPathDesc> generateYPaths( Object structObj) throws IllegalArgumentException {
-        List nameList = (List) structInspector.getStructFieldData(structObj, attrNamesField);
-        List valueList = (List) structInspector.getStructFieldData(structObj, attrValuesField);
-
-        List<YPathDesc> retVal = new ArrayList<YPathDesc>();
-        if( nameList == null || valueList == null) {
-            return retVal;
-        }
-
-        if(nameList.size() != valueList.size()) {
-            throw new IllegalArgumentException("Number of atttribute names must equal number of attribute values");
-        }
-
-        List<YPathDesc> prevYPaths = new ArrayList<YPathDesc>();
-        List<YPathDesc> nextPrevYPaths = new ArrayList<YPathDesc>();
-
-        prevYPaths.add( getDimBase(structObj) );
-        for(int i=0; i< nameList.size(); ++i) {
-            String attrValue = attrValueInspector.getPrimitiveJavaObject(valueList.get(i));
-            String attrName = attrNameInspector.getPrimitiveJavaObject(nameList.get(i));
-
-            if(attrValue != null) {
-                if(! attrValue.contains("|")) {
-                    String cleanVal = clean( attrValue);
-                    if(cleanVal != null) {
-                        for(YPathDesc prevYPath : prevYPaths) {
-                            YPathDesc newYp = prevYPath.addAttribute(attrName, cleanVal);
-                            retVal.add(newYp);
-                            nextPrevYPaths.add(newYp);
-                        }
-                    }
-                } else{
-                    ///// If we want to emit multiple rows for an xunit, for a particular YPath
-                    ////  (ie. Both Asian and Hispanic ethnicity  )
-                    //// Assumption is that multiple values will be |-pipe separated ..
-                    String[] subVals = attrValue.split("\\|");
-                    for(String subVal : subVals) {
-                        String cleanSubVal = clean( subVal);
-                        if( cleanSubVal != null) {
-                            for(YPathDesc prevYPath : prevYPaths) {
-                                YPathDesc newYp = prevYPath.addAttribute(attrName, cleanSubVal);
-                                retVal.add(newYp);
-                                nextPrevYPaths.add( newYp);
-                            }
-                        }
-                    }
-                }
-            }
-            prevYPaths = nextPrevYPaths;
-            nextPrevYPaths = new ArrayList<YPathDesc>();
-        }
-        return retVal;
-    }
-
+    private List<YPathDesc> generateYPaths(Object structObj)
+    	    throws IllegalArgumentException
+    	  {
+    	    List nameList = null;List valueList = null;
+    	    Object nameListObj = this.structInspector.getStructFieldData(structObj, this.attrNamesField);
+    	    if ((nameListObj instanceof ArrayList))
+    	    {
+    	      nameList = (List)this.structInspector.getStructFieldData(structObj, this.attrNamesField);
+    	      valueList = (List)this.structInspector.getStructFieldData(structObj, this.attrValuesField);
+    	    }
+    	    else
+    	    {
+    	      LazyArray nameListArr = (LazyArray)this.structInspector.getStructFieldData(structObj, this.attrNamesField);
+    	      nameList = nameListArr != null ? nameListArr.getList() : null;
+    	      LazyArray valueListArr = (LazyArray)this.structInspector.getStructFieldData(structObj, this.attrValuesField);
+    	      valueList = valueListArr != null ? valueListArr.getList() : null;
+    	    }
+    	    if ((nameList != null) && (valueList != null))
+    	    {
+    	      List<YPathDesc> retVal = new ArrayList();
+    	      if ((nameList == null) || (valueList == null)) {
+    	        return retVal;
+    	      }
+    	      if (nameList.size() != valueList.size()) {
+    	        throw new IllegalArgumentException("Number of atttribute names must equal number of attribute values");
+    	      }
+    	      List<YPathDesc> prevYPaths = new ArrayList();
+    	      List<YPathDesc> nextPrevYPaths = new ArrayList();
+    	      
+    	      prevYPaths.add(getDimBase(structObj));
+    	      for (int i = 0; i < nameList.size(); i++)
+    	      {
+    	        String attrValue = this.attrValueInspector.getPrimitiveJavaObject(valueList.get(i));
+    	        String attrName = this.attrNameInspector.getPrimitiveJavaObject(nameList.get(i));
+    	        if (attrValue != null)
+    	        {
+    	          String cleanVal;
+    	          if (!attrValue.contains("|"))
+    	          {
+    	            cleanVal = clean(attrValue);
+    	            if (cleanVal != null) {
+    	              for (YPathDesc prevYPath : prevYPaths)
+    	              {
+    	                YPathDesc newYp = prevYPath.addAttribute(attrName, cleanVal);
+    	                retVal.add(newYp);
+    	                nextPrevYPaths.add(newYp);
+    	              }
+    	            }
+    	          }
+    	          else
+    	          {
+    	            String[] subVals = attrValue.split("\\|");
+    	            String cleanSubVal;
+    	            for (String subVal : subVals)
+    	            {
+    	              cleanSubVal = clean(subVal);
+    	              if (cleanSubVal != null) {
+    	                for (YPathDesc prevYPath : prevYPaths)
+    	                {
+    	                  YPathDesc newYp = prevYPath.addAttribute(attrName, cleanSubVal);
+    	                  retVal.add(newYp);
+    	                  nextPrevYPaths.add(newYp);
+    	                }
+    	              }
+    	            }
+    	          }
+    	        }
+    	        prevYPaths = nextPrevYPaths;
+    	        nextPrevYPaths = new ArrayList();
+    	      }
+    	      return retVal;
+    	    }
+    	    return new ArrayList();
+    	  }
 }
