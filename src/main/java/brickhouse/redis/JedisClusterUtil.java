@@ -45,6 +45,7 @@ public class JedisClusterUtil {
 
                     try {
                         if (jedisCluster != null) {
+                            HivePipeToRedis.batchUpdate(jedisCluster, HivePipeToRedis.map);
                             jedisCluster.close();
                         }
 
