@@ -18,7 +18,7 @@ public class HivePipeToRedis {
 
     public static void main(String[] args) {
         if (args == null || args.length == 0) {
-            LOGGER.error("参数不对,格式如：redis的URI 批次大小");
+            LOGGER.error("参数不对,格式如：java -jar *.jar redis的URI 批次大小");
             System.exit(1);
         }
 
@@ -26,29 +26,26 @@ public class HivePipeToRedis {
         LOGGER.info("start," + parameters);
 
         String host = args[0];
-        long batch = args.length > 1 ? Long.parseLong(args[1]) : 1000;
+        long batch = args.length > 1 ? Long.parseLong(args[1]) : 10000;
 
         long total = 0;
         long beginTime = System.currentTimeMillis();
-        long lastTime = System.currentTimeMillis();
         map = new LinkedHashMap<>((int) (batch / 0.7));
         URI uri = URI.create(host);
         HostAndPort hostAndPort = new HostAndPort(uri.getHost(), uri.getPort());
         String password = JedisURIHelper.getPassword(uri);
         JedisCluster jedisCluster = JedisClusterUtil.getJedisCluster(hostAndPort, password);
+
         Scanner sc = new Scanner(System.in);
-        while (true) {
-            if (!sc.hasNext()) {
-                LOGGER.debug("没有输入，等待");
-                if (System.currentTimeMillis() - lastTime > 10000) {
-                    break;
-                }
-                continue;
-            }
-            lastTime = System.currentTimeMillis();
+        while (sc.hasNext()) {
             String line = sc.nextLine();
             // System.out.println(line);
             int index = line.indexOf('\t');
+            if (index < 0) {
+                LOGGER.warn("无效数据," + line);
+                continue;
+            }
+
             String key = line.substring(0, index);
             String value = line.substring(index + 1);
             LOGGER.debug("key," + key);
