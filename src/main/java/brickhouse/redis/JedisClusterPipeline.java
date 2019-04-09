@@ -134,7 +134,7 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 		} finally {
 			// 所有还没有执行过的client要保证执行(flush)，防止放回连接池后后面的命令被污染
 			for (Jedis jedis : jedisMap.values()) {	
-				flushCachedData(jedis);
+				// flushCachedData(jedis);
 			}
 			
 			hasDataInBuf = false;
