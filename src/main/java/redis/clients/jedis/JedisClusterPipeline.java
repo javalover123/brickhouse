@@ -7,22 +7,16 @@
  */
 package redis.clients.jedis;
 
-import java.io.Closeable;
-import java.lang.reflect.Field;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Queue;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import redis.clients.jedis.exceptions.JedisMovedDataException;
 import redis.clients.jedis.exceptions.JedisRedirectionException;
 import redis.clients.jedis.util.JedisClusterCRC16;
 import redis.clients.jedis.util.SafeEncoder;
+
+import java.io.Closeable;
+import java.lang.reflect.Field;
+import java.util.*;
 
 /**
  * 在集群模式下提供批量操作的功能。 <br/>
@@ -32,8 +26,8 @@ import redis.clients.jedis.util.SafeEncoder;
  * 如果失败需要应用自己去重试，因此每个批次执行的命令数量需要控制。防止失败后重试的数量过多。<br />
  * 基于以上说明，建议在集群环境较稳定（增减节点不会过于频繁）的情况下使用，且允许失败或有对应的重试策略。<br />
  *
- * 该类非线程安全
- * 
+ * https://zhuanlan.zhihu.com/p/30879714
+ *
  * @author youaremoon
  * @version
  * @since Ver 1.1
@@ -53,7 +47,7 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 	private JedisSlotBasedConnectionHandler connectionHandler;
 	private JedisClusterInfoCache clusterInfoCache;
 	private Queue<Client> clients = new LinkedList<Client>();	// 根据顺序存储每个命令对应的Client
-	private Map<JedisPool, Jedis> jedisMap = new HashMap<>();	// 用于缓存连接
+	private Map<JedisPool, Map<Long, Jedis>> jedisMap = new HashMap<JedisPool, Map<Long, Jedis>>();   // 用于缓存连接
 	private boolean hasDataInBuf = false;	// 是否有数据在缓存区
 	
 	/**
@@ -105,6 +99,7 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 	}
 	
 	private void innerSync(List<Object> formatted) {
+        HashSet<Client> clientSet = new HashSet<Client>();
 		try {
 			for (Client client : clients) {
 				// 在sync()调用时其实是不需要解析结果数据的，但是如果不调用get方法，发生了JedisMovedDataException这样的错误应用是不知道的，因此需要调用get()来触发错误。
@@ -112,6 +107,10 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 				Object data = generateResponse(client.getOne()).get();
 				if (null != formatted) {
 					formatted.add(data);
+				}
+				// size相同说明所有的client都已经添加，就不用再调用add方法了
+				if (clientSet.size() != jedisMap.size()) {
+					clientSet.add(client);
 				}
 			}
 		} catch (JedisRedirectionException jre) {
@@ -123,11 +122,17 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 
 			throw jre;
 		} finally {
-			// 所有还没有执行过的client要保证执行(flush)，防止放回连接池后后面的命令被污染
-			for (Jedis jedis : jedisMap.values()) {	
-				flushCachedData(jedis);
-			}
-			
+            if (clientSet.size() != jedisMap.size()) {
+                // 所有还没有执行过的client要保证执行(flush)，防止放回连接池后后面的命令被污染
+                for (Map.Entry<JedisPool, Map<Long, Jedis>> poolEntry : jedisMap.entrySet()) {
+                    for (Map.Entry<Long, Jedis> jedisEntry : poolEntry.getValue().entrySet()) {
+                        if (clientSet.contains(jedisEntry.getValue().getClient())) {
+                            continue;
+                        }
+                        flushCachedData(jedisEntry.getValue());
+                    }
+                }
+            }
 			hasDataInBuf = false;
 			close();
 		}
@@ -139,14 +144,14 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 		
 		clients.clear();
 		
-		for (Jedis jedis : jedisMap.values()) {
-			if (hasDataInBuf) {
-				flushCachedData(jedis);
-			}
-			
-			jedis.close();
-		}
-		
+        for (Map.Entry<JedisPool, Map<Long, Jedis>> poolEntry : jedisMap.entrySet()) {
+            for (Map.Entry<Long, Jedis> jedisEntry : poolEntry.getValue().entrySet()) {
+                if (hasDataInBuf) {
+                    flushCachedData(jedisEntry.getValue());
+                }
+                jedisEntry.getValue().close();
+            }
+        }
 		jedisMap.clear();
 		
 		hasDataInBuf = false;
@@ -178,15 +183,28 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 	}
 	
 	private Jedis getJedis(int slot) {
-		JedisPool pool = clusterInfoCache.getSlotPool(slot);
-		
-		// 根据pool从缓存中获取Jedis
-		Jedis jedis = jedisMap.get(pool);
-		if (null == jedis) {
-			jedis = pool.getResource();
-			jedisMap.put(pool, jedis);
-		}
+        // 根据线程id从缓存中获取Jedis
+        Jedis jedis = null;
+        Map<Long, Jedis> tmpMap = null;
+        //获取线程id
+        long id = Thread.currentThread().getId();
+        //获取jedispool
+        JedisPool pool = clusterInfoCache.getSlotPool(slot);
 
+        if (jedisMap.containsKey(pool)) {
+            tmpMap = jedisMap.get(pool);
+            if (tmpMap.containsKey(id)) {
+                jedis = tmpMap.get(id);
+            } else {
+                jedis = pool.getResource();
+                tmpMap.put(id, jedis);
+            }
+        } else {
+            tmpMap = new HashMap<Long, Jedis>();
+            jedis = pool.getResource();
+            tmpMap.put(id, jedis);
+            jedisMap.put(pool,tmpMap);
+        }
 		hasDataInBuf = true;
 		return jedis;
 	}
