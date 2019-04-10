@@ -5,7 +5,7 @@
  * @date 2016年6月25日
  * @version V1.0
  */
-package brickhouse.redis;
+package redis.clients.jedis;
 
 import java.io.Closeable;
 import java.lang.reflect.Field;
@@ -19,15 +19,6 @@ import java.util.Queue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import redis.clients.jedis.BinaryJedisCluster;
-import redis.clients.jedis.Client;
-import redis.clients.jedis.Jedis;
-import redis.clients.jedis.JedisCluster;
-import redis.clients.jedis.JedisClusterConnectionHandler;
-import redis.clients.jedis.JedisClusterInfoCache;
-import redis.clients.jedis.JedisPool;
-import redis.clients.jedis.JedisSlotBasedConnectionHandler;
-import redis.clients.jedis.PipelineBase;
 import redis.clients.jedis.exceptions.JedisMovedDataException;
 import redis.clients.jedis.exceptions.JedisRedirectionException;
 import redis.clients.jedis.util.JedisClusterCRC16;
@@ -134,7 +125,7 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 		} finally {
 			// 所有还没有执行过的client要保证执行(flush)，防止放回连接池后后面的命令被污染
 			for (Jedis jedis : jedisMap.values()) {	
-				// flushCachedData(jedis);
+				flushCachedData(jedis);
 			}
 			
 			hasDataInBuf = false;
@@ -163,7 +154,7 @@ public class JedisClusterPipeline extends PipelineBase implements Closeable {
 	
 	private void flushCachedData(Jedis jedis) {
 		try {
-			jedis.getClient().sync();
+			jedis.getClient().flush();
 		} catch (RuntimeException ex) {
 			// 其中一个client出问题，后面出问题的几率较大
 		}

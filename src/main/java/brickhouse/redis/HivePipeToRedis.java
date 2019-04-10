@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.JedisCluster;
+import redis.clients.jedis.JedisClusterPipeline;
 import redis.clients.jedis.util.JedisURIHelper;
 
 import java.net.URI;
