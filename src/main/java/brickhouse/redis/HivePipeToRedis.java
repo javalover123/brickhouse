@@ -59,6 +59,7 @@ public class HivePipeToRedis {
         batchUpdate(jedisCluster, map);
         long cost = System.currentTimeMillis() - beginTime;
         LOGGER.info("end," + parameters + "," + total + "," + TimeUnit.MILLISECONDS.toMinutes(cost));
+        System.exit(0);
     }
 
     protected static void batchUpdate(JedisCluster jedisCluster, Map<String, String> setList) {
